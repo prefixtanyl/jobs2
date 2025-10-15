@@ -3,223 +3,563 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Career Navigator Prototype</title>
+    <title>Career Navigator SPA - Full Firebase</title>
     <!-- Load Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Load Inter font (recommended standard) -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
-        body { font-family: 'Inter', sans-serif; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            /* Added transition for smooth theme changes */
+            transition: background-color 0.5s, color 0.5s; 
+        }
+        /* Utility for smooth view transitions */
+        .page-content {
+            transition: opacity 0.3s ease-in-out;
+        }
+        /* Simple modal styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            z-index: 50;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+        /* NOTE: Dark mode styling for modal content is now handled by Tailwind classes on the div */
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen flex flex-col">
+<!-- Added dark:bg-gray-900 to body for theme switching -->
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen flex flex-col transition-colors duration-500">
 
-    <!-- Global State & Configuration -->
+    <!-- Firebase Imports and Logic -->
     <script type="module">
-        // Import Firebase modules for single-file deployment
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, serverTimestamp, arrayUnion, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { 
+            getAuth, 
+            onAuthStateChanged, 
+            signInWithEmailAndPassword, 
+            signOut,
+            signInAnonymously,
+            signInWithCustomToken
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            query, 
+            addDoc, 
+            getDocs, 
+            onSnapshot,
+            updateDoc,
+            doc,
+            arrayUnion
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 
-        // Global constants and state as defined in the architecture
+        setLogLevel('Debug'); 
+
+        let db;
+        let auth;
+        let userId = null; 
+        let userEmail = null; // Will hold the display name (e.g., "Guest (1234)", "user@example.com")
+        let isAuthenticated = false;
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         
-        let app, db, auth;
+        // Define initial jobs to seed the public collection if empty
+        const initialSeedJobs = [
+            { title: 'Firebase Frontend Engineer', company: 'The Real-Time Co.', location: 'Remote', description: 'Build fast, secure single-page applications using Firebase and modern web stacks.', tags: ['firebase', 'firestore', 'javascript'], status: 'open' },
+            { title: 'Firestore Data Architect', company: 'Data Sync Services', location: 'San Francisco, CA', description: 'Design secure and scalable NoSQL database structures for global applications.', tags: ['database', 'security', 'nosql'], status: 'open' },
+            { title: 'Cloud Functions Developer', company: 'Serverless Solutions', location: 'New York, NY', description: 'Develop and maintain backend services using Google Cloud Functions and Firebase.', tags: ['cloud', 'backend', 'node.js'], status: 'open' }
+        ];
+
+        // Define Firestore Paths
+        const FIRESTORE_COLLECTIONS = {
+            publicJobs: `artifacts/${appId}/public/data/jobs`, // All jobs are public
+            sessions: (uid) => `artifacts/${appId}/users/${uid}/sessions`, // Private sessions
+        };
         
-        // --- Core State Management (src/core/state.js) ---
-        const state = {
-            user: { userId: null, isAuthReady: false },
-            lang: 'en',
-            subs: {}, // For storing onSnapshot unsubscribe functions
-            uiFlags: { isRendering: false, isApplying: false }
+        // Application State - ADDED currentTheme
+        window.state = {
+            jobs: [],      
+            sessions: [],  
+            uiFlags: { 
+                isRendering: false, 
+                isApplying: false, 
+                isCreating: false, 
+                authMode: 'signIn', 
+                isMenuOpen: false 
+            },
+            currentPage: 'home',
+            currentTheme: 'light' // Default theme
         };
 
-        // Simplified i18n (src/core/i18n.js)
-        const dictionary = {
-            en: {
-                app_title: "Career Navigator",
-                welcome_user: "Welcome, User ID:",
-                explore_jobs: "Explore Open Jobs",
-                book_session: "Book Private Coaching",
-                jobs_feed: "Real-Time Job Feed",
-                scheduler_title: "Schedule Private Session",
-                applied: "Applied!",
-                apply_now: "Apply Now",
-                applying: "Applying...",
-                session_time: "Session Date & Time",
-                book_button: "Book Session",
-                session_booked: "Session Booked Successfully!",
-                select_datetime: "Please select a future date and time.",
-                invalid_datetime: "Invalid date or time selected.",
-                my_sessions: "My Booked Sessions",
-                no_jobs: "No open jobs found right now. Check back soon!",
-                no_sessions: "No sessions booked yet."
+        // Unsubscribe functions for real-time listeners
+        let unsubscribePublicJobs = null;
+        let unsubscribeSessions = null;
+
+
+        // --- Global Functions (Exposed to HTML) ---
+        window.navigateTo = navigateTo;
+        window.toggleMenu = toggleMenu;
+        window.createJob = createJob;
+        window.scheduleSession = scheduleSession;
+        window.applyToJob = applyToJob;
+        window.handleAuthSubmit = handleAuthSubmit;
+        window.handleSignOut = handleSignOut;
+        window.openAuthModal = openAuthModal;
+        window.closeAuthModal = closeAuthModal;
+        window.showToast = showToast;
+        window.toggleTheme = toggleTheme; // New Theme function
+
+        /** Applies the theme class to the body and updates the toggle icon. */
+        function applyTheme(theme) {
+            const body = document.body;
+            if (theme === 'dark') {
+                body.classList.add('dark');
+            } else {
+                body.classList.remove('dark');
             }
-        };
-
-        function t(key) {
-            return dictionary[state.lang][key] || key;
+            updateThemeToggleIcon(theme);
         }
 
-        // --- Firebase Init & Auth (src/core/config.js, src/core/auth.js) ---
+        /** Loads theme preference from local storage or defaults. */
+        function loadTheme() {
+            // Check localStorage, default to 'light'
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            state.currentTheme = savedTheme;
+            applyTheme(savedTheme);
+        }
 
+        /** Toggles the theme between light and dark. */
+        function toggleTheme() {
+            const newTheme = state.currentTheme === 'light' ? 'dark' : 'light';
+            state.currentTheme = newTheme;
+            localStorage.setItem('theme', newTheme);
+            applyTheme(newTheme);
+        }
+
+        /** Updates the SVG icon on the theme toggle button. */
+        function updateThemeToggleIcon(theme) {
+            const iconContainer = document.getElementById('theme-toggle-icon');
+            if (!iconContainer) return;
+            if (theme === 'dark') {
+                // Currently dark -> show sun to switch to light
+                iconContainer.innerHTML = `
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 3a9 9 0 019 9c0 5.523-4.477 10-10 10s-10-4.477-10-10a9 9 0 0110-9z" fill-rule="evenodd" clip-rule="evenodd" />
+                    </svg>
+                `; // Filled Moon icon to indicate current dark state
+            } else {
+                // Currently light -> show moon to switch to dark
+                iconContainer.innerHTML = `
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                    </svg>
+                `; // Sun icon
+            }
+        }
+
+        /** Initializes Firebase, handles auth token, and sets up the Auth listener. */
         async function initFirebase() {
-            if (!Object.keys(firebaseConfig).length) {
-                console.error("Firebase config is missing. Cannot initialize Firestore.");
-                // Fake a user for UI testing if config is unavailable
-                state.user.userId = 'mock-user-id';
-                state.user.isAuthReady = true;
+            if (Object.keys(firebaseConfig).length === 0) {
+                console.error("Firebase config is missing.");
                 return;
             }
 
             try {
-                app = initializeApp(firebaseConfig);
+                const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                setLogLevel('debug');
+                
+                // 1. Mandatory Auth Token or Anonymous Sign-in
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-                // Sign in using Custom Token or anonymously
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await signInAnonymously(auth);
                 }
 
-                // Wait for auth state change
-                await new Promise(resolve => {
-                    onAuthStateChanged(auth, (user) => {
-                        state.user.userId = user ? user.uid : null;
-                        state.user.isAuthReady = true;
-                        console.log("Auth ready. User ID:", state.user.userId);
-                        resolve();
-                    });
+                // 2. Auth State Listener (handles state changes after initial sign-in and subsequent sign-ins/outs)
+                onAuthStateChanged(auth, (user) => {
+                    isAuthenticated = !!user;
+                    userId = user ? user.uid : null;
+                    
+                    // FIX: Ensure userEmail is always a non-null string for the display name, 
+                    // preventing the crash when user.email is null for custom-token users.
+                    let displayIdentity;
+                    if (user) {
+                        if (user.isAnonymous) {
+                            displayIdentity = `Guest (${user.uid.substring(0, 8)})`;
+                        } else {
+                            // Use user.email if available, otherwise fall back to a generic user ID display
+                            displayIdentity = user.email || `User (${user.uid.substring(0, 8)})`;
+                        }
+                    } else {
+                        displayIdentity = 'Guest User';
+                    }
+                    userEmail = displayIdentity; 
+                    
+                    // Re-initialize all listeners whenever auth state changes
+                    loadAllDataListeners();
+                    renderAllSections(); // Re-render when auth changes
                 });
+                
             } catch (error) {
-                console.error("Firebase initialization failed:", error);
-                state.user.isAuthReady = true;
+                console.error("Firebase initialization or initial sign-in failed:", error);
+                showToast("Error initializing Firebase connection or signing in.", true);
+                isAuthenticated = false; 
+                userId = null;
+            }
+        }
+        
+        // --- Navigation Logic ---
+        function navigateTo(page) {
+            state.currentPage = page;
+            state.uiFlags.isMenuOpen = false; // Close menu on navigation
+            const menu = document.getElementById('mobile-menu');
+            if(menu) menu.classList.add('hidden');
+            renderAllSections();
+        }
+
+        function toggleMenu() {
+            state.uiFlags.isMenuOpen = !state.uiFlags.isMenuOpen;
+            const menu = document.getElementById('mobile-menu');
+            if(menu) menu.classList.toggle('hidden', !state.uiFlags.isMenuOpen);
+        }
+
+        // --- Utility Functions ---
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast-container');
+            if (!toast) return;
+            
+            toast.textContent = message;
+            
+            if (isError) {
+                toast.classList.remove('bg-green-500', 'hidden');
+                toast.classList.add('bg-red-500');
+            } else {
+                toast.classList.remove('bg-red-500', 'hidden');
+                toast.classList.add('bg-green-500');
+            }
+
+            toast.classList.remove('opacity-0', 'scale-95');
+            toast.classList.add('opacity-100', 'scale-100');
+            
+            setTimeout(() => {
+                toast.classList.remove('opacity-100', 'scale-100');
+                toast.classList.add('opacity-0', 'scale-95', 'hidden');
+            }, 3000);
+        }
+
+        // --- Authentication Handlers ---
+        
+        // FIX: Enforce only 'signIn' mode and hide the 'Sign Up' toggle button.
+        function openAuthModal(mode = 'signIn') {
+            state.uiFlags.authMode = 'signIn'; // FIX: Force signIn mode
+            const titleEl = document.getElementById('auth-modal-title');
+            const submitBtn = document.getElementById('auth-submit-btn');
+
+            if (!titleEl || !submitBtn) return;
+
+            // Force sign in messaging and hide toggle button
+            titleEl.textContent = 'Sign In to Your Account';
+            submitBtn.textContent = 'Sign In';
+
+            document.getElementById('auth-modal-overlay').style.display = 'flex';
+        }
+
+        function closeAuthModal() {
+            const overlay = document.getElementById('auth-modal-overlay');
+            if(overlay) overlay.style.display = 'none';
+            const errorEl = document.getElementById('auth-error-message');
+            if(errorEl) errorEl.textContent = '';
+            const form = document.getElementById('auth-form');
+            if(form) form.reset();
+        }
+        
+        async function handleAuthSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const email = form.email.value;
+            const password = form.password.value;
+            const submitBtn = document.getElementById('auth-submit-btn');
+            const errorEl = document.getElementById('auth-error-message');
+
+            if (!submitBtn || !errorEl) return;
+
+            errorEl.textContent = '';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing...';
+
+            try {
+                // FIX: ONLY attempt Sign In (removed createUserWithEmailAndPassword logic)
+                await signInWithEmailAndPassword(auth, email, password);
+                showToast('Signed in successfully!');
+                
+                closeAuthModal();
+                navigateTo('home'); 
+
+            } catch (error) {
+                console.error("Auth failed:", error);
+                
+                // FIX: Custom error message for the common operation-not-allowed issue
+                let errorMessage = error.message.includes('auth/operation-not-allowed') ? 
+                    'Error: Email/Password sign-in may be disabled. Please use the platform\'s primary authentication (Custom Token) or the Guest mode.' :
+                    error.message.replace('Firebase: Error (auth/', '').replace(').', '').replace(/-/g, ' ');
+
+                errorEl.textContent = 'Error: ' + errorMessage;
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Sign In';
             }
         }
 
-        // --- Firestore DB Operations (src/core/db.js) ---
-
-        function jobsCol(appId) {
-            return collection(db, `artifacts/${appId}/public/data/jobs`);
+        async function handleSignOut() {
+            try {
+                await signOut(auth);
+                showToast('Signed out successfully.');
+                navigateTo('home');
+            } catch (error) {
+                console.error("Sign out failed:", error);
+                showToast("Sign out failed.", true);
+            }
         }
-
-        function sessionsCol(appId, userId) {
-            return collection(db, `artifacts/${appId}/users/${userId}/sessions`);
-        }
-
-        /** Subscribes to the public job list. */
-        function subscribeJobs(appId, onChange) {
-            if (!db) return () => {};
-            const q = query(jobsCol(appId)); // Optionally add where('status', '==', 'open')
-            
-            // Unsubscribe existing listener if present
-            if (state.subs.jobs) state.subs.jobs();
-
-            const unsub = onSnapshot(q, (snap) => {
-                const jobs = [];
-                snap.forEach(d => jobs.push({ id: d.id, ...d.data() }));
-                onChange(jobs);
-            }, (error) => {
-                console.error("Error subscribing to jobs:", error);
-            });
-            
-            state.subs.jobs = unsub;
-            return unsub;
-        }
-
-        /** Subscribes to the user's private sessions. */
-        function subscribeSessions(appId, userId, onChange) {
-            if (!db || !userId) return () => {};
-            const q = query(sessionsCol(appId, userId));
-
-            // Unsubscribe existing listener if present
-            if (state.subs.sessions) state.subs.sessions();
-
-            const unsub = onSnapshot(q, (snap) => {
-                const sessions = [];
-                snap.forEach(d => sessions.push({ id: d.id, ...d.data() }));
-                onChange(sessions);
-            }, (error) => {
-                console.error("Error subscribing to sessions:", error);
-            });
-            
-            state.subs.sessions = unsub;
-            return unsub;
-        }
-
-        /** Writes an idempotent application using arrayUnion. */
-        async function applyToJob(appId, jobId, userId) {
-            if (!db) return;
-            const ref = doc(db, `artifacts/${appId}/public/data/jobs/${jobId}`);
-            await updateDoc(ref, { applicants: arrayUnion(userId) });
-        }
-
-        // --- Mock Data Setup (For quick prototype start) ---
         
-        // This is necessary to show something initially if the DB is empty
-        async function seedMockJobData() {
+        // --- Data Listener Handlers (The core of the Firebase switch) ---
+        
+        /**
+         * Seeds the public jobs collection with initial data if it's empty.
+         */
+        async function seedPublicJobs(publicJobsCol) {
+            try {
+                // Check if the collection is truly empty before seeding
+                const checkSnapshot = await getDocs(publicJobsCol);
+                if (!checkSnapshot.empty) return; // Already populated, do nothing.
+
+                for (const job of initialSeedJobs) {
+                    await addDoc(publicJobsCol, {
+                        title: job.title,
+                        company: job.company,
+                        location: job.location,
+                        description: job.description,
+                        tags: job.tags,
+                        status: 'open',
+                        createdAt: new Date().toISOString(),
+                        applicants: []
+                    });
+                }
+                showToast("Public job listings have been seeded successfully!");
+            } catch (error) {
+                console.error("Error seeding public jobs:", error);
+                showToast("Failed to seed public jobs.", true);
+            }
+        }
+
+        /**
+         * Attaches all necessary real-time listeners.
+         */
+        function loadAllDataListeners() {
             if (!db) return;
 
-            const mockJobs = [
-                { title: "Senior Cloud Engineer", company: "TechCorp", location: "Remote, US", description: "Build scalable infrastructure on Google Cloud.", tags: ["cloud", "gcp", "engineer"], status: "open", applicants: [] },
-                { title: "Frontend Developer (React)", company: "WebFlow Inc", location: "NYC", description: "Develop modern, responsive user interfaces.", tags: ["react", "ui", "web"], status: "open", applicants: [] },
-                { title: "Data Analyst", company: "DataSolutions", location: "Austin, TX", description: "Analyze market trends and user behavior.", tags: ["sql", "analysis", "data"], status: "open", applicants: [] },
-            ];
+            // Unsubscribe existing listeners to prevent leaks/duplicates
+            if (unsubscribePublicJobs) unsubscribePublicJobs();
+            if (unsubscribeSessions) unsubscribeSessions();
 
-            const jobCollection = jobsCol(appId);
+            // 1. Load PUBLIC Jobs in Real-Time
+            const publicJobsCol = collection(db, FIRESTORE_COLLECTIONS.publicJobs);
+
+            // Initial check to seed the collection if needed
+            getDocs(publicJobsCol).then(snapshot => {
+                if (snapshot.empty) {
+                    seedPublicJobs(publicJobsCol);
+                }
+            }).catch(e => console.error("Error checking job collection for seed:", e));
+
+
+            unsubscribePublicJobs = onSnapshot(publicJobsCol, (snapshot) => {
+                state.jobs = snapshot.docs.map(doc => ({ 
+                    id: doc.id,
+                    ...doc.data(),
+                    // Ensure 'applicants' is an array for safety
+                    applicants: doc.data().applicants || [], 
+                }));
+                
+                // Trigger UI update for job listings if on that page
+                if (state.currentPage === 'listings') {
+                    // FIX: Added a 0ms setTimeout to ensure DOM is updated after navigation 
+                    // and before the list rendering attempts to find the container.
+                    setTimeout(renderJobsList, 0); 
+                }
+
+            }, (error) => {
+                console.error("Error loading public jobs:", error);
+                showToast("Error loading public job listings.", true);
+            });
             
-            // Check if the collection is empty before seeding
-            const snap = await getDocs(query(jobCollection));
-            if (snap.empty) {
-                console.log("Seeding mock job data...");
-                for (const job of mockJobs) {
-                    await addDoc(jobCollection, { ...job, createdAt: serverTimestamp() });
+            // 2. Load PRIVATE Sessions in Real-Time (only if authenticated)
+            if (userId && !auth.currentUser.isAnonymous) { // Only fetch sessions for real accounts
+                const sessionsCol = collection(db, FIRESTORE_COLLECTIONS.sessions(userId));
+                unsubscribeSessions = onSnapshot(sessionsCol, (snapshot) => {
+                    state.sessions = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    
+                    // Trigger UI update for sessions
+                    if (state.currentPage === 'employ') {
+                        renderSessionsList(state.sessions);
+                    }
+                }, (error) => {
+                    console.error("Error loading sessions from Firestore:", error);
+                    showToast("Could not load sessions from Firestore.", true);
+                });
+            } else {
+                // Clear sessions listener and state if signed out or anonymous
+                state.sessions = [];
+                if (unsubscribeSessions) {
+                    unsubscribeSessions();
+                    unsubscribeSessions = null;
                 }
             }
         }
 
+        /**
+         * Applies to a job by updating the job document in Firestore with the user's ID.
+         */
+        async function applyToJob(jobId) {
+            if (!userId || auth.currentUser.isAnonymous) {
+                showToast("Please sign in with a registered account to apply to jobs.", true);
+                openAuthModal('signIn');
+                return;
+            }
 
-        // --- UI Rendering (src/ui/jobs.js, src/ui/scheduler.js, src/ui/render.js) ---
+            const job = state.jobs.find(j => j.id === jobId);
+            if (!job) return showToast("Job not found.", true);
 
-        // Helper to show temporary feedback (src/ui/toasts.js)
-        function showToast(message) {
-            const toast = document.getElementById('toast-container');
-            if (!toast) return;
-            toast.textContent = message;
-            toast.classList.remove('opacity-0', 'scale-95', 'hidden');
-            toast.classList.add('opacity-100', 'scale-100');
-            setTimeout(() => {
-                toast.classList.remove('opacity-100', 'scale-100');
-                toast.classList.add('opacity-0', 'scale-95');
-            }, 3000);
+            // Check if already applied (based on local state derived from Firestore)
+            if (job.applicants.includes(userId)) {
+                return showToast("You have already applied to this job.", true);
+            }
+
+            try {
+                // The `doc` function needs the full path including the collection and document ID
+                const jobDocRef = doc(db, FIRESTORE_COLLECTIONS.publicJobs, jobId);
+
+                // Use arrayUnion to atomically add the userId to the applicants array
+                await updateDoc(jobDocRef, {
+                    applicants: arrayUnion(userId)
+                });
+                
+                showToast("Application submitted successfully! (Real-time update via Firestore)");
+
+            } catch (error) {
+                console.error("Application failed:", error);
+                showToast("Application failed: " + error.message, true);
+            }
+        }
+        
+        /**
+         * Creates a new job posting and saves it to the public collection.
+         */
+        async function createJob(e) {
+            e.preventDefault();
+            if (!db || !userId || auth.currentUser.isAnonymous) return showToast("Must be signed in with a registered account to post a job.", true);
+            
+            const form = e.target;
+            const btn = document.getElementById('job-submit');
+            if (state.uiFlags.isCreating) return;
+            
+            state.uiFlags.isCreating = true;
+            btn.disabled = true;
+            btn.textContent = 'Posting to Firestore...';
+
+            try {
+                const newJob = {
+                    title: form['job-title'].value,
+                    company: form['job-company'].value,
+                    location: form['job-location'].value,
+                    description: form['job-description'].value,
+                    tags: form['job-tags'].value.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0),
+                    status: 'open',
+                    createdAt: new Date().toISOString(),
+                    posterId: userId, // Track who posted it
+                    applicants: [] // Initialize empty applicants array
+                };
+                
+                if (!newJob.title || !newJob.company || !newJob.description) throw new Error("Please fill in required fields.");
+
+                const publicJobsCol = collection(db, FIRESTORE_COLLECTIONS.publicJobs);
+                await addDoc(publicJobsCol, newJob);
+                
+                showToast("Job posted successfully to the public listings!");
+                form.reset();
+
+            } catch (error) {
+                console.error("Firestore job creation failed:", error);
+                showToast("Job creation failed: " + error.message, true);
+            } finally {
+                state.uiFlags.isCreating = false;
+                btn.disabled = false;
+                btn.textContent = 'Post Job to Public Listings';
+            }
         }
 
-        // --- RENDER JOBS LIST ---
-        function jobCardHTML(job, userId) {
-            const applied = Array.isArray(job.applicants) && job.applicants.includes(userId);
+        /**
+         * Saves a new session booking to the user's private collection.
+         */
+        async function saveSession(sessionData) {
+            if (!db || !userId) throw new Error("Firestore not initialized or user not logged in.");
+
+            const sessionsCol = collection(db, FIRESTORE_COLLECTIONS.sessions(userId));
+            const newSession = {
+                ...sessionData,
+                createdAt: new Date().toISOString(),
+                status: 'booked'
+            };
+
+            await addDoc(sessionsCol, newSession);
+        }
+
+
+        // --- UI Rendering Functions for Specific Content ---
+
+        function jobCardHTML(job) {
+            // Check if the current user ID is in the job's applicants array
+            const isApplied = userId && job.applicants && job.applicants.includes(userId);
             const statusClosed = job.status === 'closed';
-            const btnText = statusClosed ? 'Closed' : (applied ? t('applied') : t('apply_now'));
-            const btnColor = statusClosed ? 'bg-gray-400' : (applied ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700');
+            const numApplicants = (job.applicants || []).length;
+            const isAnonymous = userId && auth.currentUser?.isAnonymous;
+
+            const btnText = statusClosed ? 'Closed' : (isApplied ? 'Applied!' : (isAnonymous ? 'Sign In to Apply' : 'Apply Now'));
+            const btnColor = statusClosed ? 'bg-gray-400' : (isApplied ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700');
+            const isDisabled = statusClosed || isApplied || isAnonymous;
+            
+            const applicantsBadge = userId && (job.posterId === userId) ? 
+                `<span class="ml-2 px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 rounded-full dark:bg-red-900 dark:text-red-100">${numApplicants} Applicants</span>` : '';
 
             return `
-            <div id="job-card-${job.id}" class="card bg-white p-6 shadow-md rounded-lg transition hover:shadow-xl">
-                <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
-                <p class="text-md text-gray-700 mt-1">${job.company} • <span class="font-semibold">${job.location}</span></p>
-                <div class="mt-2 flex flex-wrap gap-2">
-                    ${job.tags.map(tag => `<span class="px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-full">${tag}</span>`).join('')}
+            <div id="job-card-${job.id}" class="card bg-white dark:bg-gray-800 p-6 shadow-md rounded-lg transition hover:shadow-xl dark:shadow-none dark:hover:shadow-indigo-500/50">
+                <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">${job.title}</h3>
+                <p class="text-md text-gray-700 dark:text-gray-300 mt-1">${job.company} • <span class="font-semibold">${job.location}</span></p>
+                <div class="mt-2 flex flex-wrap gap-2 items-center">
+                    ${(job.tags || []).map(tag => `<span class="px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-full dark:bg-indigo-900 dark:text-indigo-200">${tag}</span>`).join('')}
+                    ${applicantsBadge}
                 </div>
-                <p class="mt-4 text-gray-600">${job.description}</p>
+                <p class="mt-4 text-gray-600 dark:text-gray-400">${job.description}</p>
                 <div class="mt-6 flex justify-end">
                     <button 
                         id="apply-${job.id}" 
-                        class="btn px-4 py-2 text-white rounded-lg transition disabled:opacity-50 ${btnColor}"
-                        ${applied || statusClosed ? 'disabled' : ''}
-                        data-job-id="${job.id}"
+                        class="btn px-4 py-2 text-white font-semibold rounded-lg transition duration-150 disabled:opacity-50 ${btnColor}"
+                        ${isDisabled ? 'disabled' : ''}
+                        onclick="${isAnonymous ? `openAuthModal('signIn')` : `applyToJob('${job.id}')`}"
+                        type="button"
                     >
                         ${btnText}
                     </button>
@@ -227,78 +567,36 @@
             </div>`;
         }
 
-        function bindApplyButtons(appId, jobs, userId) {
-            jobs.forEach(job => {
-                const btn = document.getElementById(`apply-${job.id}`);
-                if (!btn) return;
-                
-                // If button is already applied or closed, the initial HTML state is correct, skip binding
-                if (btn.disabled) return;
-                
-                // Bind click handler for unapplied jobs
-                btn.onclick = async () => {
-                    if (state.uiFlags.isApplying) return;
-                    
-                    state.uiFlags.isApplying = true;
-                    btn.disabled = true;
-                    btn.textContent = t('applying');
-
-                    try {
-                        await applyToJob(appId, job.id, userId);
-                        // The UI will be updated by the Firestore snapshot, 
-                        // which handles the true success state.
-                    } catch (error) {
-                        console.error("Application failed:", error);
-                        showToast("Application failed. See console.");
-                        // Revert button state on failure
-                        btn.disabled = false;
-                        btn.textContent = t('apply_now');
-                    } finally {
-                        state.uiFlags.isApplying = false;
-                    }
-                };
-            });
-        }
-
         function renderJobsList() {
-            const container = document.getElementById('jobs-list');
+            const container = document.getElementById('jobs-list-container');
             if (!container) return;
-            if (!state.user.isAuthReady || !db) {
-                 container.innerHTML = `<p class="text-center text-gray-500 mt-8">Loading jobs...</p>`;
+
+            if (state.jobs.length === 0) {
+                 container.innerHTML = `<p class="col-span-full text-center text-gray-500 dark:text-gray-400 mt-8">No open jobs found right now. Try posting one!</p>`;
                  return;
             }
+            
+            // Sort by creation date (newest first)
+            const sortedJobs = [...state.jobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-            // The onSnapshot callback handles the initial render and all updates
-            subscribeJobs(appId, (jobs) => {
-                // Null-safety check for container before mutation
-                const listContainer = document.getElementById('jobs-list');
-                if (!listContainer) return;
-
-                if (jobs.length === 0) {
-                    listContainer.innerHTML = `<p class="text-center text-gray-500 mt-8">${t('no_jobs')}</p>`;
-                    return;
-                }
-
-                listContainer.innerHTML = jobs.map(j => jobCardHTML(j, state.user.userId)).join('');
-                bindApplyButtons(appId, jobs, state.user.userId);
-            });
+            container.innerHTML = sortedJobs.map(j => jobCardHTML(j)).join('');
         }
+        
+        async function scheduleSession(e) {
+            e.preventDefault();
+            if (!isAuthenticated || auth.currentUser.isAnonymous) return showToast("Please sign in with a registered account to book a session.", true);
 
-        // --- RENDER SCHEDULER ---
-        async function scheduleSession() {
             const dtInput = document.getElementById('session-datetime');
             const btn = document.getElementById('session-submit');
             
-            // Null-safety checks
-            if (!dtInput || !btn || !state.user.userId || !db) return;
+            if (!dtInput || !btn) return;
 
             const value = dtInput.value;
-            if (!value) return showToast(t('select_datetime'));
+            if (!value) return showToast('Please select a future date and time.', true);
 
             const when = new Date(value);
-            // Check for invalid date and ensure it's in the future
             if (isNaN(when.getTime()) || when < new Date()) {
-                return showToast(t('invalid_datetime'));
+                return showToast('Invalid date or time selected.', true);
             }
 
             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -307,139 +605,364 @@
             btn.textContent = 'Scheduling...';
 
             try {
-                const col = sessionsCol(appId, state.user.userId);
-                await addDoc(col, {
-                    scheduledAt: when,
+                await saveSession({
+                    scheduledAt: when.toISOString(), 
                     timezone: tz,
                     topic: 'career_coaching',
-                    createdAt: serverTimestamp(),
-                    status: 'booked'
                 });
-                showToast(t('session_booked'));
-                dtInput.value = ''; // Clear form on success
+
+                showToast('Session Booked Successfully!');
+                dtInput.value = ''; 
             } catch (error) {
                 console.error("Scheduling failed:", error);
-                showToast("Scheduling failed. Please try again.");
+                showToast("Scheduling failed. Please try again.", true);
             } finally {
                 btn.disabled = false;
-                btn.textContent = t('book_button');
+                btn.textContent = 'Book Session';
             }
         }
 
         function renderSessionsList(sessions) {
-            const container = document.getElementById('sessions-list');
+            const container = document.getElementById('sessions-list-container');
             if (!container) return;
 
             if (sessions.length === 0) {
-                container.innerHTML = `<p class="text-gray-500">${t('no_sessions')}</p>`;
+                container.innerHTML = `<p class="text-gray-500 dark:text-gray-400">No sessions booked yet.</p>`;
                 return;
             }
 
             container.innerHTML = sessions
-                .sort((a, b) => (b.scheduledAt?.toDate() || 0) - (a.scheduledAt?.toDate() || 0)) // Sort by date
+                .sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt)) 
                 .map(s => {
-                    const date = s.scheduledAt?.toDate()?.toLocaleString() || 'Pending...';
+                    const date = new Date(s.scheduledAt).toLocaleString() || 'Pending...'; 
                     return `
-                        <div class="p-4 bg-white shadow rounded-lg border-l-4 border-blue-500">
-                            <p class="font-semibold">${date}</p>
-                            <p class="text-sm text-gray-600">Topic: ${s.topic.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}</p>
-                            <p class="text-xs text-gray-500">Status: <span class="font-medium text-green-700">${s.status.toUpperCase()}</span></p>
+                        <div class="p-4 bg-white dark:bg-gray-700 shadow rounded-lg border-l-4 border-blue-500">
+                            <p class="font-semibold text-gray-900 dark:text-gray-100">${date}</p>
+                            <p class="text-sm text-gray-600 dark:text-gray-300">Topic: ${s.topic.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">Status: <span class="font-medium text-green-700">${s.status.toUpperCase()}</span></p>
                         </div>
                     `;
                 }).join('');
         }
         
-        function renderScheduler() {
-            if (!state.user.isAuthReady || !db || !state.user.userId) return;
+        // --- PAGE RENDERING FUNCTIONS ---
 
-            // Bind scheduling button
-            const btn = document.getElementById('session-submit');
-            if (btn) btn.onclick = scheduleSession;
-
-            // Subscribe to private sessions for real-time list
-            subscribeSessions(appId, state.user.userId, renderSessionsList);
+        function renderHomePage() {
+            return `
+                <section class="p-10 bg-indigo-50 dark:bg-indigo-900 rounded-xl shadow-lg text-center mb-12 transition-colors duration-500">
+                    <h2 class="text-4xl font-extrabold text-indigo-800 dark:text-indigo-200 mb-4">Welcome to Career Navigator</h2>
+                    <p class="text-xl text-indigo-700 dark:text-indigo-300 mb-6">This site is now 100% powered by **Firebase Firestore** for real-time, persistent job and session data!</p>
+                    <p class="text-lg text-indigo-600 dark:text-indigo-400 mb-8">Sign in to **Post Jobs** and **Book Coaching Sessions**.</p>
+                    <div class="flex justify-center flex-wrap gap-4">
+                        <button onclick="navigateTo('listings')" class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150">View All Real-Time Listings</button>
+                        ${isAuthenticated && !auth.currentUser.isAnonymous ? 
+                           `<button onclick="navigateTo('employ')" class="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-150">Manage Account & Jobs</button>` :
+                           `<button onclick="openAuthModal('signIn')" class="px-6 py-3 bg-yellow-600 text-white font-semibold rounded-lg hover:bg-yellow-700 transition duration-150">Sign In (or use Guest Mode)</button>`
+                        }
+                    </div>
+                </section>
+                <section class="mt-12 text-center text-gray-600 dark:text-gray-400">
+                    <p class="text-sm">Current User: ${userEmail} (${auth?.currentUser?.isAnonymous ? 'Anonymous' : (isAuthenticated ? 'Registered' : 'Guest')})</p>
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">To perform full management tasks (Post Job, Book Session), you must be signed in via the custom token provided by the environment, as standard Email/Password Sign Up is currently disabled.</p>
+                </section>
+            `;
         }
 
-        // --- Main App Logic (src/main.js) ---
+        function renderJobListingPage() {
+            
+            // Check if jobs state is already populated (from onSnapshot)
+            const initialContent = state.jobs.length > 0 ? 
+                '<p class="col-span-full text-center py-4 text-gray-500 dark:text-gray-400">Listings are updated in real-time.</p>' : 
+                (db ? '<div class="col-span-full text-center py-12 text-gray-500 dark:text-gray-400">Loading job data from Firestore...</div>' : '<div class="col-span-full text-center py-12 text-red-500 dark:text-red-400">Firebase failed to initialize. Cannot load jobs.</div>');
 
-        function renderAllSections() {
-            if (state.uiFlags.isRendering || !state.user.isAuthReady) return;
-            state.uiFlags.isRendering = true;
+            return `
+                <section class="mb-12">
+                    <h2 class="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-6 border-b pb-2">All Real-Time Job Listings</h2>
+                    <div id="jobs-list-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        ${initialContent}
+                    </div>
+                </section>
+            `;
+        }
 
-            // 1. Update Global Header with User ID
-            const header = document.getElementById('user-header');
-            if (header) {
-                header.innerHTML = `${t('welcome_user')} <span class="font-mono text-xs bg-gray-200 px-2 py-0.5 rounded">${state.user.userId}</span>`;
+        function renderEmployManagePage() {
+            
+            if (!isAuthenticated || auth.currentUser.isAnonymous) {
+                return `
+                    <section class="text-center p-12 bg-red-100 dark:bg-red-900 rounded-xl shadow-lg transition-colors duration-500">
+                        <h2 class="text-3xl font-bold text-red-800 dark:text-red-200 mb-4">Access Denied</h2>
+                        <p class="text-xl text-red-700 dark:text-red-300 mb-6">Please sign in with a **registered account** (not Anonymous/Guest) to post jobs and manage sessions.</p>
+                        <p class="text-md text-red-600 dark:text-red-400 mb-8">This is required for security and data isolation (Private Data Collection).</p>
+                        <button onclick="openAuthModal('signIn')" class="px-6 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">Attempt Sign In</button>
+                    </section>
+                `;
             }
 
-            // 2. Render Jobs (Public Data)
-            renderJobsList();
+            return `
+                <section class="mb-12">
+                    <h2 class="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-6 border-b border-gray-200 dark:border-gray-700 pb-2">Employ & Management Tools</h2>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <!-- Job Creation Form -->
+                        <div class="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-lg transition-colors duration-500">
+                            <h3 class="text-xl font-semibold text-green-700 dark:text-green-400 mb-4">Post a Job Listing</h3>
+                            <p class="text-sm text-blue-600 dark:text-blue-400 mb-4">This job will appear instantly on the public listings page for all users.</p>
+                            <form id="job-creation-form" class="space-y-3" onsubmit="createJob(event)">
+                                <input type="text" id="job-title" name="job-title" required placeholder="Job Title" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
+                                <input type="text" id="job-company" name="job-company" required placeholder="Company" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
+                                <input type="text" id="job-location" name="job-location" required placeholder="Location" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
+                                <input type="text" id="job-tags" name="job-tags" placeholder="Tags (comma-separated)" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
+                                <textarea id="job-description" name="job-description" rows="3" required placeholder="Description" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400"></textarea>
+                                <button type="submit" id="job-submit" class="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-150 disabled:bg-gray-400">
+                                    Post Job to Public Listings
+                                </button>
+                            </form>
+                        </div>
 
-            // 3. Render Scheduler (Private Data)
-            renderScheduler();
+                        <!-- Session Scheduler -->
+                        <div class="p-6 bg-gray-100 dark:bg-gray-900 rounded-xl shadow-inner transition-colors duration-500">
+                            <h3 class="text-xl font-semibold text-indigo-700 dark:text-indigo-400 mb-4">Book 1:1 Coaching Session</h3>
+                            <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">Saved privately to your user collection.</p>
+                            <form id="session-form" onsubmit="scheduleSession(event)">
+                                <div class="mb-6">
+                                    <label for="session-datetime" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Session Date & Time</label>
+                                    <input type="datetime-local" id="session-datetime" required
+                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
+                                </div>
+                                <button type="submit" id="session-submit" 
+                                    class="w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition disabled:bg-gray-400">
+                                    Book Session
+                                </button>
+                            </form>
+                            
+                            <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4 border-t border-gray-200 dark:border-gray-700 pt-4">My Booked Sessions</h3>
+                            <div id="sessions-list-container" class="flex flex-col gap-4">
+                                <p class="text-gray-500 dark:text-gray-400">Loading sessions from Firestore...</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            `;
+        }
+
+
+        // --- Main Router ---
+        function renderContent() {
+            const contentArea = document.getElementById('app-content');
+            if (!contentArea) return;
+
+            // Fade out current content
+            contentArea.style.opacity = '0';
+            
+            let htmlContent = '';
+            
+            switch (state.currentPage) {
+                case 'home':
+                    htmlContent = renderHomePage();
+                    break;
+                case 'listings':
+                    htmlContent = renderJobListingPage();
+                    break;
+                case 'employ':
+                    htmlContent = renderEmployManagePage();
+                    break;
+                default:
+                    htmlContent = renderHomePage();
+            }
+
+            // After a short delay to allow fade out, set new content and fade in
+            setTimeout(() => {
+                contentArea.innerHTML = htmlContent;
+                contentArea.style.opacity = '1';
+                
+                // Specific Post-Render Logic
+                if (state.currentPage === 'listings') {
+                    // Render list immediately if data is available 
+                    renderJobsList();
+                } else if (state.currentPage === 'employ' && isAuthenticated) {
+                    // Render sessions list immediately if data is available 
+                    renderSessionsList(state.sessions);
+                }
+            }, 300); // 300ms matches the CSS transition time
+        }
+
+        // --- Master Render Function ---
+        function renderAllSections() {
+            if (state.uiFlags.isRendering) return;
+            state.uiFlags.isRendering = true;
+
+            // Calculate the greeting name safely
+            // userEmail is guaranteed to be a string now. If it contains '@', use the part before it.
+            const greetingDisplayName = userEmail && userEmail.includes('@') ? userEmail.split('@')[0] : userEmail;
+
+            // 1. Update Header Auth Status
+            const authControls = document.getElementById('auth-controls');
+            if (authControls) {
+                if (isAuthenticated) {
+                    authControls.innerHTML = `
+                        <span class="text-sm font-semibold text-indigo-700 dark:text-indigo-300 mr-4 hidden sm:inline">Hello, ${greetingDisplayName}</span>
+                        <button onclick="handleSignOut()" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150 text-sm">Sign Out</button>
+                    `;
+                } else {
+                    authControls.innerHTML = `
+                        <button onclick="openAuthModal('signIn')" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 text-sm">Sign In</button>
+                    `;
+                }
+            }
+
+            // 2. Render Hamburger Menu Links
+            const menuLinksContainer = document.getElementById('mobile-menu-links');
+            if (menuLinksContainer) {
+                menuLinksContainer.innerHTML = `
+                    <a href="#" onclick="navigateTo('home')" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-gray-700">Home</a>
+                    <a href="#" onclick="navigateTo('listings')" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-gray-700">Job Listings</a>
+                    <a href="#" onclick="navigateTo('employ')" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-gray-700">${isAuthenticated && !auth.currentUser?.isAnonymous ? 'Employ/Manage' : 'Employ (Sign In)'}</a>
+                `;
+            }
+
+            // 3. Update the theme icon after other elements are rendered
+            updateThemeToggleIcon(state.currentTheme);
+
+            // 4. Render the correct page content
+            renderContent();
+
 
             state.uiFlags.isRendering = false;
         }
 
         // Main Bootstrap Function
         window.onload = async function bootstrap() {
-            console.log("App ID:", appId);
-            await initFirebase();
+            // 1. Load theme preference first
+            loadTheme();
+
+            // 2. Render the UI immediately to clear the "Loading" state.
+            renderAllSections(); 
             
-            // Seed mock data if required (runs only if collection is empty)
-            await seedMockJobData(); 
-            
-            // Wait for auth to be fully ready before rendering
-            if (state.user.isAuthReady) {
-                renderAllSections();
-            } else {
-                // Set a listener for subsequent auth changes if the initial wait failed
-                setTimeout(renderAllSections, 2000); 
-            }
+            // 3. Then, initialize Firebase and handle auth state asynchronously.
+            initFirebase();
         };
 
     </script>
 
-    <!-- Navigation & Header -->
-    <header class="sticky top-0 bg-white shadow-lg z-10">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-            <h1 class="text-2xl font-extrabold text-indigo-700 tracking-tight">${t('app_title')}</h1>
-            <div id="user-header" class="text-gray-600 text-sm">Loading user...</div>
+    <!-- Toast Notification Container -->
+    <div id="toast-container" 
+        class="fixed bottom-5 right-5 z-50 p-4 rounded-lg text-white font-semibold shadow-2xl 
+               transition-all duration-300 ease-in-out opacity-0 scale-95 hidden"
+        style="min-width: 250px;">
+        Notification goes here.
+    </div>
+
+    <!-- Authentication Modal -->
+    <div id="auth-modal-overlay" class="modal-overlay">
+        <div class="modal-content bg-white dark:bg-gray-800">
+            <h3 id="auth-modal-title" class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Sign In to Your Account</h3>
+            <p id="auth-error-message" class="text-red-500 text-sm mb-4"></p>
+            
+            <form id="auth-form" onsubmit="handleAuthSubmit(event)">
+                <div class="mb-4">
+                    <label for="auth-email" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+                    <input type="email" id="auth-email" name="email" required
+                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
+                </div>
+                <div class="mb-6">
+                    <label for="auth-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+                    <input type="password" id="auth-password" name="password" required minlength="6"
+                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
+                </div>
+                <button type="submit" id="auth-submit-btn" 
+                    class="w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 disabled:bg-gray-400">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Sign Up toggle is hidden due to "operation not allowed" issue -->
+            <button onclick="toggleAuthMode()" id="auth-toggle-btn"
+                class="mt-4 w-full text-sm text-indigo-600 hover:text-indigo-800 transition duration-150 hidden">
+                Need an account? Sign Up
+            </button>
+            
+            <button onclick="closeAuthModal()" 
+                class="absolute top-3 right-3 text-gray-500 dark:text-gray-300 hover:text-gray-800 transition">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Navigation & Header (Desktop & Mobile) -->
+    <header class="sticky top-0 bg-white dark:bg-gray-800 shadow-lg z-20 transition-colors duration-500">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo/Title -->
+                <a href="#" onclick="navigateTo('home')" class="text-2xl font-extrabold text-indigo-700 dark:text-indigo-400 tracking-tight">Career Navigator</a>
+                
+                <!-- Desktop Nav Links -->
+                <nav class="hidden sm:flex space-x-4 items-center">
+                    <button onclick="toggleTheme()" class="p-2 rounded-full text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-150" aria-label="Toggle Theme">
+                        <span id="theme-toggle-icon">
+                            <!-- Icon populated by JS -->
+                        </span>
+                    </button>
+                    <a href="#" onclick="navigateTo('home')" class="text-gray-600 dark:text-gray-300 hover:text-indigo-800 dark:hover:text-indigo-400 font-medium transition">Home</a>
+                    <a href="#" onclick="navigateTo('listings')" class="text-gray-600 dark:text-gray-300 hover:text-indigo-800 dark:hover:text-indigo-400 font-medium transition">Listings</a>
+                    <a href="#" onclick="navigateTo('employ')" class="text-gray-600 dark:text-gray-300 hover:text-indigo-800 dark:hover:text-indigo-400 font-medium transition">Employ</a>
+                    <div id="auth-controls">
+                        <!-- Auth status (Sign In or Sign Out/User Email) -->
+                    </div>
+                </nav>
+
+                <!-- Mobile Menu Button & Theme Toggle (Combined) -->
+                <div class="sm:hidden flex items-center space-x-2">
+                    <button onclick="toggleTheme()" class="p-2 rounded-full text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-150" aria-label="Toggle Theme">
+                        <span id="theme-toggle-icon-mobile">
+                            <!-- Icon populated by JS -->
+                        </span>
+                        <script>
+                            // This script copies the icon from the desktop version to the mobile version
+                            const desktopIcon = document.getElementById('theme-toggle-icon');
+                            const mobileIcon = document.getElementById('theme-toggle-icon-mobile');
+                            if (desktopIcon && mobileIcon) {
+                                // Observer to update mobile icon when desktop one changes
+                                const observer = new MutationObserver(() => {
+                                    mobileIcon.innerHTML = desktopIcon.innerHTML;
+                                });
+                                observer.observe(desktopIcon, { childList: true });
+                            }
+                        </script>
+                    </button>
+                    <button onclick="toggleMenu()" class="inline-flex items-center justify-center p-2 rounded-md text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500" aria-expanded="false">
+                        <svg class="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Menu (Hidden by default) -->
+        <div class="sm:hidden hidden bg-white dark:bg-gray-800 shadow-md absolute w-full transition-colors duration-500" id="mobile-menu">
+            <div class="px-2 pt-2 pb-3 space-y-1" id="mobile-menu-links">
+                <!-- Links dynamically populated by renderAllSections -->
+            </div>
+            <div class="border-t border-gray-100 dark:border-gray-700 p-3 text-right">
+                 <!-- Mobile auth status rendered here for signing out -->
+                 ${isAuthenticated ? `<button onclick="handleSignOut()" class="w-full px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">Sign Out</button>` : `<button onclick="openAuthModal('signIn')" class="w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150">Sign In</button>`}
+            </div>
         </div>
     </header>
 
     <!-- Main Content Area -->
     <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        <!-- Value Proposition Section (src/ui/home.js) -->
-        <section class="mb-12 p-8 bg-indigo-50 rounded-xl shadow-lg">
-            <h2 class="text-3xl font-bold text-indigo-800 mb-4">Your Career Journey, Real-Time.</h2>
-            <p class="text-indigo-700 mb-6">This prototype demonstrates real-time synchronization using Firestore for public job listings and secure, private data separation for coaching sessions.</p>
-            <div class="flex flex-col sm:flex-row gap-4">
-                <a href="#jobs" class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 text-center">${t('explore_jobs')}</a>
-                <a href="#scheduler" class="px-6 py-3 bg-white text-indigo-600 border border-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition duration-150 text-center">${t('book_session')}</a>
-            </div>
-        </section>
-        
-        <hr class="my-8">
+        <!-- Application Content Container - Dynamically Updated by JS -->
+        <div id="app-content" class="page-content">
+            <!-- Content will be rendered here immediately by bootstrap() -->
+            <div class="animate-pulse p-10 bg-gray-100 dark:bg-gray-800 rounded-xl text-center text-gray-500 dark:text-gray-400">Loading Application...</div>
+        </div>
 
-        <!-- Real-Time Jobs List Section (Public Data) -->
-        <section id="jobs" class="mb-12 scroll-mt-20">
-            <h2 class="text-2xl font-bold text-gray-800 mb-6">${t('jobs_feed')}</h2>
-            <div id="jobs-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <!-- Job cards will be rendered here dynamically -->
-                <div class="col-span-full">
-                    <div class="animate-pulse flex flex-col space-y-4 p-6 bg-white rounded-lg shadow-md">
-                        <div class="h-6 bg-gray-200 rounded w-3/4"></div>
-                        <div class="h-4 bg-gray-200 rounded w-1/2"></div>
-                        <div class="h-4 bg-gray-200 rounded w-full"></div>
-                        <div class="h-10 bg-gray-300 rounded w-1/4 self-end"></div>
-                    </div>
-                </div>
-            </div>
-        </section>
+    </main>
 
-        <hr class="my-8">
-
-        <!-- Private Scheduler Section (Per-User Private Data) -->
-        <section id="scheduler" class="mb-1
+    <!-- Footer -->
+    <footer class="bg-white dark:bg-gray-800 text-center py-4 border-t border-gray-100 dark:border-gray-700 mt-8 transition-colors duration-500">
+        <p class="text-sm text-gray-500 dark:text-gray-400">Career Navigator by Gemini. All data stored in Firebase Firestore.</p>
+    </footer>
+</body>
+</html>
