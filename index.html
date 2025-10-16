@@ -3,966 +3,739 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Career Navigator SPA - Full Firebase</title>
-    <!-- Load Tailwind CSS CDN -->
+    <title id="app-title">कृषि सलाहकार (चैटबॉट)</title>
+    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load Inter font (recommended standard) -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'primary': '#059669', /* Green for the "farmer" theme */
+                        'secondary': '#10b981',
+                        'chat-bg': '#e0f2f1',
+                        'earth': '#78350f'
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
-        body { 
-            font-family: 'Inter', sans-serif; 
-            /* Added transition for smooth theme changes */
-            transition: background-color 0.5s, color 0.5s; 
+        /* Custom styles for chat interface and fixed language selector */
+        body {
+            background-color: #f0fdf4; 
+            min-height: 100vh;
         }
-        /* Utility for smooth view transitions */
-        .page-content {
-            transition: opacity 0.3s ease-in-out;
+        .dark body {
+            background-color: #111827;
         }
-        /* Simple modal styles */
-        .modal-overlay {
+        #chat-container {
+            position: relative;
+        }
+        #chat-window {
+            height: 60vh;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        .user-message {
+            background-color: #d1fae5;
+            align-self: flex-end;
+            border-radius: 12px 12px 0 12px;
+        }
+        .dark .user-message {
+            background-color: #065f46;
+            color: #f3f4f6;
+        }
+        .ai-message {
+            background-color: white;
+            align-self: flex-start;
+            border-radius: 12px 12px 12px 0;
+            white-space: pre-wrap;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        .dark .ai-message {
+            background-color: #374151;
+            color: #f3f4f6;
+        }
+        /* Language Selector Styling (Small Oval Dropdown Look-alike) */
+        #language-selector {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.6);
-            z-index: 50;
-            display: none;
-            justify-content: center;
-            align-items: center;
+            top: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            z-index: 100;
+            writing-mode: vertical-lr; /* Vertical text */
+            text-orientation: mixed;
+            padding: 8px 4px;
+            border-radius: 12px 0 0 12px;
+            box-shadow: -4px 0 8px rgba(0, 0, 0, 0.1);
+            cursor: pointer;
+            line-height: 1.5;
         }
-        /* NOTE: Dark mode styling for modal content is now handled by Tailwind classes on the div */
+        .ai-message a {
+            word-break: break-all;
+            color: #2563eb;
+        }
+        .dark .ai-message a {
+            color: #60a5fa;
+        }
     </style>
 </head>
-<!-- Added dark:bg-gray-900 to body for theme switching -->
-<body class="bg-gray-50 dark:bg-gray-900 min-h-screen flex flex-col transition-colors duration-500">
+<body class="font-sans flex justify-center items-center p-4 bg-green-50 dark:bg-gray-900">
 
-    <!-- Firebase Imports and Logic -->
+    <!-- Language Selector Button (Oval, Right Edge) -->
+    <button id="language-selector" onclick="toggleLanguage()"
+            class="bg-secondary hover:bg-primary text-white text-xs font-semibold transition duration-150 ease-in-out">
+        English
+    </button>
+
+    <div id="chat-container" class="w-full max-w-xl bg-white dark:bg-gray-800 rounded-xl shadow-2xl overflow-hidden">
+        
+        <!-- Header -->
+        <header class="bg-primary text-white p-4 flex justify-between items-center">
+            <h1 id="header-title" class="text-xl font-bold">🌾 कृषि सलाहकार</h1>
+            <div class="flex items-center space-x-4">
+                <span id="auth-status" class="text-xs px-2 py-1 rounded-full bg-green-700">तैयार</span>
+                <button id="theme-toggle" class="p-2 rounded-full hover:bg-green-700 transition">
+                    <svg id="theme-icon-light" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                    <svg id="theme-icon-dark" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Chat Window -->
+        <div id="chat-window" class="p-4 bg-chat-bg dark:bg-gray-700 flex flex-col space-y-4">
+            <!-- Messages will be rendered here by renderChatHistory -->
+        </div>
+
+        <!-- Input Area (Chatbot Function) -->
+        <div id="input-area" class="p-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+            
+            <!-- Image Preview Area -->
+            <div id="image-preview-container" class="mb-3 p-2 border border-gray-300 dark:border-gray-600 rounded-lg hidden relative">
+                <img id="image-preview" class="max-h-24 w-auto rounded-md object-contain mx-auto" alt="Image preview">
+                <button onclick="clearImage()" class="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 leading-none text-xs w-6 h-6 flex items-center justify-center shadow-lg hover:bg-red-600 transition">
+                    &times;
+                </button>
+            </div>
+
+            <!-- Input Row -->
+            <div class="flex items-center space-x-0 w-full"> 
+                
+                <!-- Hidden File Input -->
+                <input type="file" id="image-upload" accept="image/*" class="hidden" onchange="handleImageSelection()">
+
+                <!-- 1. Camera Button (Rounded Left) -->
+                <button id="upload-btn" onclick="document.getElementById('image-upload').click()" 
+                        class="bg-gray-300 hover:bg-gray-400 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 font-bold p-3 rounded-l-lg transition duration-150 ease-in-out disabled:opacity-50 flex-shrink-0 z-10" 
+                        title="Image Upload">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-camera"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                </button>
+                
+                <!-- 2. Mic Button (No Rounding) -->
+                <button id="mic-btn" onclick="toggleVoiceInput()" 
+                        class="bg-gray-300 hover:bg-gray-400 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 font-bold p-3 transition duration-150 ease-in-out disabled:opacity-50 flex-shrink-0 z-10 -ml-px"
+                        title="Start Voice Input">
+                    <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-mic"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </button>
+
+                <!-- 3. Text Input (No Rounding, uses border) -->
+                <input type="text" id="chat-input" placeholder="एक प्रश्न पूछें..."
+                       class="flex-grow p-3 border border-gray-300 dark:bg-gray-800 dark:border-gray-600 dark:text-white dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary dark:focus:ring-secondary focus:border-transparent -ml-px z-0">
+                
+                <!-- 4. Send Button (Rounded Right) -->
+                <button id="send-btn" onclick="handleUserInput()" 
+                        class="bg-primary hover:bg-secondary text-white font-bold py-3 px-4 rounded-r-lg transition duration-150 ease-in-out disabled:opacity-50 flex-shrink-0 -ml-px z-10">
+                    भेजें
+                </button>
+            </div>
+        </div>
+
+        <!-- Hidden Error/Debug Display -->
+        <div id="error-message" class="p-2 bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 text-xs hidden"></div>
+        <div id="debug-info" class="p-2 text-gray-500 dark:text-gray-400 text-xs text-center border-t border-gray-100 dark:border-gray-700 flex justify-between items-center">
+            <span id="debug-lang-info"></span>
+            <button id="credits-btn" class="text-xs text-blue-500 hover:underline">Credits</button>
+        </div>
+    </div>
+
+    <!-- Credits Modal -->
+    <div id="credits-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm text-center">
+            <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-2">Credits</h3>
+            <p id="credits-text-content" class="text-sm text-gray-600 dark:text-gray-300 mb-4"></p>
+            <button id="close-credits-btn" class="bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-150 ease-in-out">
+                Close
+            </button>
+        </div>
+    </div>
+
+
+    <!-- Core Logic -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { 
-            getAuth, 
-            onAuthStateChanged, 
-            signInWithEmailAndPassword, 
-            signOut,
-            signInAnonymously,
-            signInWithCustomToken
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { 
-            getFirestore, 
-            collection, 
-            query, 
-            addDoc, 
-            getDocs, 
-            onSnapshot,
-            updateDoc,
-            doc,
-            arrayUnion
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-
-        setLogLevel('Debug'); 
-
-        let db;
-        let auth;
-        let userId = null; 
-        let userEmail = null; // Will hold the display name (e.g., "Guest (1234)", "user@example.com")
-        let isAuthenticated = false;
         
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // --- Gemini API Configuration ---
+        const apiKey = "AIzaSyB8Nd8wFuqQtrlSK2UjyGULwlz2QYGvYU8"; // API key is handled by the environment
+        const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent';
+        const TTS_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent';
         
-        // Define initial jobs to seed the public collection if empty
-        const initialSeedJobs = [
-            { title: 'Firebase Frontend Engineer', company: 'The Real-Time Co.', location: 'Remote', description: 'Build fast, secure single-page applications using Firebase and modern web stacks.', tags: ['firebase', 'firestore', 'javascript'], status: 'open' },
-            { title: 'Firestore Data Architect', company: 'Data Sync Services', location: 'San Francisco, CA', description: 'Design secure and scalable NoSQL database structures for global applications.', tags: ['database', 'security', 'nosql'], status: 'open' },
-            { title: 'Cloud Functions Developer', company: 'Serverless Solutions', location: 'New York, NY', description: 'Develop and maintain backend services using Google Cloud Functions and Firebase.', tags: ['cloud', 'backend', 'node.js'], status: 'open' }
-        ];
+        // --- Customizable Credits Text ---
+        const creditsText = "This Conversational Farm Advisor was built by a brilliant developer using Gemini.";
 
-        // Define Firestore Paths
-        const FIRESTORE_COLLECTIONS = {
-            publicJobs: `artifacts/${appId}/public/data/jobs`, // All jobs are public
-            sessions: (uid) => `artifacts/${appId}/users/${uid}/sessions`, // Private sessions
-        };
-        
-        // Application State - ADDED currentTheme
-        window.state = {
-            jobs: [],      
-            sessions: [],  
-            uiFlags: { 
-                isRendering: false, 
-                isApplying: false, 
-                isCreating: false, 
-                authMode: 'signIn', 
-                isMenuOpen: false 
+        // --- Localization Data (Simplified) ---
+        const TEXTS = {
+            'en': {
+                title: "Farm Advisor Chatbot",
+                ready: "Ready",
+                placeholder: "Ask a question about your crop, or upload an image...",
+                send: "Send",
+                init_welcome: "Hello! I'm Krishi Mitra, your expert Farm Advisor. Upload an image of your crop/pest issue and ask me a question, or just ask general advice. Click the speaker icon to hear my advice!",
+                api_error: "API Error",
+                language_text: "English",
+                processing_error: "Sorry, I ran into an error getting a response from the advisor. Please try again.",
+                upload_image: "Upload Image",
+                clear_image: "Clear Image",
+                listen_advice: "Listen to Advice",
+                tts_error: "TTS Error",
+                audio_playback_error: "Audio playback error",
+                start_mic: "Start Voice Input",
+                listening: "Listening...",
+                tts_data_error: "Audio data section missing or empty in API response. Try a different voice or simpler text.",
+                translation_error: "Failed to translate chat history.",
+                translating: "Translating..."
             },
-            currentPage: 'home',
-            currentTheme: 'light' // Default theme
+            'hi': {
+                title: "कृषि सलाहकार (चैटबॉट)",
+                ready: "तैयार",
+                placeholder: " अपनी फसल के बारे में एक प्रश्न पूछें, या एक छवि अपलोड करें...",
+                send: "भेजें",
+                init_welcome: "नमस्ते! मैं कृषि मित्र, आपका विशेषज्ञ कृषि सलाहकार हूँ। अपनी फसल/कीट की समस्या की एक छवि अपलोड करें और मुझसे एक प्रश्न पूछें, या बस सामान्य सलाह लें। मेरी सलाह सुनने के लिए स्पीकर आइकन पर क्लिक करें!",
+                api_error: "एपीआई त्रुटि",
+                language_text: "हिंदी",
+                processing_error: "क्षमा करें, सलाहकार से प्रतिक्रिया प्राप्त करने में एक त्रुटि हुई। कृपया पुन: प्रयास करें।",
+                upload_image: "छवि अपलोड करें",
+                clear_image: "छवि हटाएं",
+                listen_advice: "सलाह सुनें",
+                tts_error: "टीटीएस त्रुटि",
+                audio_playback_error: "ऑडियो चलाने में त्रुटि",
+                start_mic: "आवाज इनपुट शुरू करें",
+                listening: "सुन रहा हूँ...",
+                tts_data_error: "एपीआई प्रतिक्रिया में ऑडियो डेटा अनुभाग गायब या खाली है। कोई भिन्न आवाज़ या सरल पाठ आज़माएँ।",
+                translation_error: "चैट इतिहास का अनुवाद करने में विफल।",
+                translating: "अनुवाद हो रहा है..."
+            }
         };
 
-        // Unsubscribe functions for real-time listeners
-        let unsubscribePublicJobs = null;
-        let unsubscribeSessions = null;
+        // --- Global State ---
+        let chatHistory = []; // Data model for the chat
+        let currentLanguage = localStorage.getItem('krishiMitraLang') || 'hi'; // Default to Hindi
+        let isReady = false; // Tracks if the basic setup is done
+        let uploadedImageBase64 = null;
+        let uploadedImageMimeType = null;
+        let currentAudio = null; // To hold the currently playing audio element
+        let recognition = null; // Holds the SpeechRecognition object
+        let isListening = false;
 
 
-        // --- Global Functions (Exposed to HTML) ---
-        window.navigateTo = navigateTo;
-        window.toggleMenu = toggleMenu;
-        window.createJob = createJob;
-        window.scheduleSession = scheduleSession;
-        window.applyToJob = applyToJob;
-        window.handleAuthSubmit = handleAuthSubmit;
-        window.handleSignOut = handleSignOut;
-        window.openAuthModal = openAuthModal;
-        window.closeAuthModal = closeAuthModal;
-        window.showToast = showToast;
-        window.toggleTheme = toggleTheme; // New Theme function
+        // --- DOM Elements ---
+        const appTitleEl = document.getElementById('app-title');
+        const headerTitleEl = document.getElementById('header-title');
+        const authStatusEl = document.getElementById('auth-status');
+        const chatWindowEl = document.getElementById('chat-window');
+        const errorMessageEl = document.getElementById('error-message');
+        const debugLangInfoEl = document.getElementById('debug-lang-info');
+        const langSelectorEl = document.getElementById('language-selector');
+        const chatInputEl = document.getElementById('chat-input');
+        const sendBtnEl = document.getElementById('send-btn');
+        const imageUploadEl = document.getElementById('image-upload');
+        const imagePreviewContainerEl = document.getElementById('image-preview-container');
+        const imagePreviewEl = document.getElementById('image-preview');
+        const micBtnEl = document.getElementById('mic-btn');
+        const micIconEl = document.getElementById('mic-icon');
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const themeIconLight = document.getElementById('theme-icon-light');
+        const themeIconDark = document.getElementById('theme-icon-dark');
+        const creditsBtn = document.getElementById('credits-btn');
+        const creditsModal = document.getElementById('credits-modal');
+        const closeCreditsBtn = document.getElementById('close-credits-btn');
+        const creditsTextContentEl = document.getElementById('credits-text-content');
 
-        /** Applies the theme class to the body and updates the toggle icon. */
-        function applyTheme(theme) {
-            const body = document.body;
-            if (theme === 'dark') {
-                body.classList.add('dark');
-            } else {
-                body.classList.remove('dark');
-            }
-            updateThemeToggleIcon(theme);
-        }
-
-        /** Loads theme preference from local storage or defaults. */
-        function loadTheme() {
-            // Check localStorage, default to 'light'
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            state.currentTheme = savedTheme;
-            applyTheme(savedTheme);
-        }
-
-        /** Toggles the theme between light and dark. */
-        function toggleTheme() {
-            const newTheme = state.currentTheme === 'light' ? 'dark' : 'light';
-            state.currentTheme = newTheme;
-            localStorage.setItem('theme', newTheme);
-            applyTheme(newTheme);
-        }
-
-        /** Updates the SVG icon on the theme toggle button. */
-        function updateThemeToggleIcon(theme) {
-            const iconContainer = document.getElementById('theme-toggle-icon');
-            if (!iconContainer) return;
-            if (theme === 'dark') {
-                // Currently dark -> show sun to switch to light
-                iconContainer.innerHTML = `
-                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 3a9 9 0 019 9c0 5.523-4.477 10-10 10s-10-4.477-10-10a9 9 0 0110-9z" fill-rule="evenodd" clip-rule="evenodd" />
-                    </svg>
-                `; // Filled Moon icon to indicate current dark state
-            } else {
-                // Currently light -> show moon to switch to dark
-                iconContainer.innerHTML = `
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
-                    </svg>
-                `; // Sun icon
-            }
-        }
-
-        /** Initializes Firebase, handles auth token, and sets up the Auth listener. */
-        async function initFirebase() {
-            if (Object.keys(firebaseConfig).length === 0) {
-                console.error("Firebase config is missing.");
-                return;
-            }
-
-            try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                // 1. Mandatory Auth Token or Anonymous Sign-in
-                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                // 2. Auth State Listener (handles state changes after initial sign-in and subsequent sign-ins/outs)
-                onAuthStateChanged(auth, (user) => {
-                    isAuthenticated = !!user;
-                    userId = user ? user.uid : null;
-                    
-                    // FIX: Ensure userEmail is always a non-null string for the display name, 
-                    // preventing the crash when user.email is null for custom-token users.
-                    let displayIdentity;
-                    if (user) {
-                        if (user.isAnonymous) {
-                            displayIdentity = `Guest (${user.uid.substring(0, 8)})`;
-                        } else {
-                            // Use user.email if available, otherwise fall back to a generic user ID display
-                            displayIdentity = user.email || `User (${user.uid.substring(0, 8)})`;
-                        }
-                    } else {
-                        displayIdentity = 'Guest User';
-                    }
-                    userEmail = displayIdentity; 
-                    
-                    // Re-initialize all listeners whenever auth state changes
-                    loadAllDataListeners();
-                    renderAllSections(); // Re-render when auth changes
-                });
-                
-            } catch (error) {
-                console.error("Firebase initialization or initial sign-in failed:", error);
-                showToast("Error initializing Firebase connection or signing in.", true);
-                isAuthenticated = false; 
-                userId = null;
-            }
-        }
-        
-        // --- Navigation Logic ---
-        function navigateTo(page) {
-            state.currentPage = page;
-            state.uiFlags.isMenuOpen = false; // Close menu on navigation
-            const menu = document.getElementById('mobile-menu');
-            if(menu) menu.classList.add('hidden');
-            renderAllSections();
-        }
-
-        function toggleMenu() {
-            state.uiFlags.isMenuOpen = !state.uiFlags.isMenuOpen;
-            const menu = document.getElementById('mobile-menu');
-            if(menu) menu.classList.toggle('hidden', !state.uiFlags.isMenuOpen);
-        }
 
         // --- Utility Functions ---
-        function showToast(message, isError = false) {
-            const toast = document.getElementById('toast-container');
-            if (!toast) return;
+
+        function setUIState(isLoading, isTranslating = false) {
+            const shouldDisable = isLoading || !isReady || isListening || isTranslating;
             
-            toast.textContent = message;
+            sendBtnEl.disabled = shouldDisable;
+            chatInputEl.disabled = shouldDisable;
+            imageUploadEl.disabled = shouldDisable;
+            micBtnEl.disabled = shouldDisable;
             
-            if (isError) {
-                toast.classList.remove('bg-green-500', 'hidden');
-                toast.classList.add('bg-red-500');
+            if (!isListening) {
+                 chatInputEl.placeholder = isLoading ? getT('processing_error') : (isTranslating ? getT('translating') : getT('placeholder'));
+            }
+            
+            sendBtnEl.innerHTML = isLoading || isTranslating ? 
+                `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>` : 
+                getT('send');
+        }
+
+        function displayError(message) {
+            errorMessageEl.textContent = message;
+            errorMessageEl.classList.remove('hidden');
+            console.error(message);
+        }
+        
+        function getOriginalIconHtml(listenText) {
+            return `
+                <span class="sr-only">${listenText}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-volume-2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+            `;
+        }
+
+        // --- Chat Rendering ---
+        async function renderChatHistory() {
+            chatWindowEl.innerHTML = ''; 
+
+            const translationTasks = [];
+            chatHistory.forEach((msg, index) => {
+                if (!msg.translations[currentLanguage]) {
+                    const sourceLang = Object.keys(msg.translations)[0];
+                    if (sourceLang) {
+                        const sourceText = msg.translations[sourceLang];
+                        translationTasks.push({ index, text: sourceText });
+                    }
+                }
+            });
+
+            if (translationTasks.length > 0) {
+                setUIState(false, true);
+                const translationPromises = translationTasks.map(task => translateText(task.text, currentLanguage));
+                try {
+                    const translatedTexts = await Promise.all(translationPromises);
+                    translatedTexts.forEach((translatedText, i) => {
+                        const task = translationTasks[i];
+                        chatHistory[task.index].translations[currentLanguage] = translatedText;
+                    });
+                } catch (e) {
+                    displayError(`${getT('translation_error')} ${e.message}`);
+                } finally {
+                    setUIState(false);
+                }
+            }
+
+            chatHistory.forEach(msg => {
+                const textToDisplay = msg.translations[currentLanguage] || msg.text;
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `p-3 max-w-[80%] ${msg.isUser ? 'user-message ml-auto' : 'ai-message'}`;
+
+                let innerHTML = '';
+                if (!msg.isUser) {
+                    let responseHtml = textToDisplay
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                        .replace(/\n/g, '<br>');
+
+                    if (msg.citations && msg.citations.length > 0) {
+                        responseHtml += `<p class="mt-2 pt-2 border-t border-gray-100 dark:border-gray-600 text-[10px] text-gray-500 dark:text-gray-400 font-medium">${currentLanguage === 'hi' ? 'स्रोत' : 'Sources'}: `;
+                        msg.citations.forEach((source, index) => {
+                            responseHtml += `<a href="${source.uri}" target="_blank" class="hover:underline">${source.title || 'Link'}</a>${index < msg.citations.length - 1 ? ', ' : ''}`;
+                        });
+                        responseHtml += '</p>';
+                    }
+                    const rawTextForTTS = msg.translations[currentLanguage] || msg.text;
+                    const escapedRawText = rawTextForTTS.replace(/'/g, "\\'").replace(/\n/g, ' ');
+                    innerHTML = `<div class="flex justify-between items-start w-full"><div class="flex-grow break-words">${responseHtml}</div><button onclick="playTts(this, '${escapedRawText}', '${currentLanguage}')" class="ml-2 p-1 rounded-full bg-secondary hover:bg-primary text-white transition duration-150 ease-in-out flex-shrink-0 shadow-md flex items-center justify-center" title="${getT('listen_advice')}">${getOriginalIconHtml(getT('listen_advice'))}</button></div>`;
+                } else {
+                    innerHTML = textToDisplay;
+                    if (msg.imageUrl) {
+                        innerHTML += `<div class="mt-2 p-1 border border-gray-200 dark:border-gray-600 rounded-md"><img src="${msg.imageUrl}" class="max-h-24 w-auto rounded-sm mx-auto object-contain" alt="Attached image"></div>`;
+                    }
+                }
+                messageDiv.innerHTML = innerHTML;
+                chatWindowEl.appendChild(messageDiv);
+            });
+            chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
+        }
+
+        // --- Theme and Localization Functions ---
+        function getT(key) {
+            return TEXTS[currentLanguage][key];
+        }
+
+        function initializeTheme() {
+            const theme = localStorage.getItem('theme');
+            if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+                themeIconLight.classList.add('hidden');
+                themeIconDark.classList.remove('hidden');
             } else {
-                toast.classList.remove('bg-red-500', 'hidden');
-                toast.classList.add('bg-green-500');
+                document.documentElement.classList.remove('dark');
+                themeIconLight.classList.remove('hidden');
+                themeIconDark.classList.add('hidden');
             }
+        }
 
-            toast.classList.remove('opacity-0', 'scale-95');
-            toast.classList.add('opacity-100', 'scale-100');
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            themeIconLight.classList.toggle('hidden', isDark);
+            themeIconDark.classList.toggle('hidden', !isDark);
+        }
+        
+        window.translateUI = function() {
+            appTitleEl.textContent = getT('title');
+            headerTitleEl.textContent = `🌾 ${getT('title')}`;
+            langSelectorEl.textContent = currentLanguage === 'hi' ? TEXTS['en'].language_text : TEXTS['hi'].language_text;
+            authStatusEl.textContent = getT('ready');
+            micBtnEl.title = isListening ? getT('listening') : getT('start_mic');
+            chatInputEl.placeholder = isListening ? getT('listening') : getT('placeholder');
+            sendBtnEl.textContent = getT('send');
+            debugLangInfoEl.textContent = `Lang: ${currentLanguage}`;
+            if (recognition && !isListening) {
+                recognition.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-US';
+            }
+            if (isReady) setUIState(false);
+        }
+        
+        window.toggleLanguage = function() {
+            currentLanguage = currentLanguage === 'hi' ? 'en' : 'hi';
+            localStorage.setItem('krishiMitraLang', currentLanguage);
+            translateUI();
+            renderChatHistory(); // Re-render chat with new language
+        }
+
+
+        // --- Image Handling ---
+        window.handleImageSelection = function() {
+            const file = imageUploadEl.files[0];
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                displayError(getT('language') === 'hi' ? "कृपया एक वैध छवि फ़ाइल चुनें।" : "Please select a valid image file.");
+                clearImage();
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                uploadedImageMimeType = file.type;
+                uploadedImageBase64 = e.target.result.split(',')[1];
+                imagePreviewEl.src = e.target.result;
+                imagePreviewContainerEl.classList.remove('hidden');
+            };
+            reader.onerror = () => {
+                displayError(getT('language') === 'hi' ? "छवि लोड करने में त्रुटि।" : "Error loading image.");
+                clearImage();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        window.clearImage = function() {
+            uploadedImageBase64 = null;
+            uploadedImageMimeType = null;
+            imageUploadEl.value = null;
+            imagePreviewEl.src = '';
+            imagePreviewContainerEl.classList.add('hidden');
+        }
+
+
+        // --- TTS Utility Functions ---
+        const VOICE_MAP = { 'hi': 'Algenib', 'en': 'Kore' };
+
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function pcmToWav(pcm16, sampleRate) {
+            const numChannels = 1;
+            const buffer = new ArrayBuffer(44 + pcm16.length * 2);
+            const view = new DataView(buffer);
+            const write = (offset, str) => str.split('').forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+            write(0, 'RIFF');
+            view.setUint32(4, 36 + pcm16.length * 2, true);
+            write(8, 'WAVE');
+            write(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * numChannels * 2, true);
+            view.setUint16(32, numChannels * 2, true);
+            view.setUint16(34, 16, true);
+            write(36, 'data');
+            view.setUint32(40, pcm16.length * 2, true);
+            pcm16.forEach((sample, i) => view.setInt16(44 + i * 2, sample, true));
+            return new Blob([view], { type: 'audio/wav' });
+        }
+        
+        function splitIntoSentences(text) {
+            return (text.match(/[^.!?\n]+([.!?\n]|$)/g) || [text]).map(s => s.trim()).filter(s => s.length > 0);
+        }
+        
+        async function fetchAudioChunk(chunkText, language) {
+            const payload = {
+                contents: [{ parts: [{ text: chunkText }] }],
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: {
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_MAP[language] || 'Kore' } },
+                        languageCode: language === 'hi' ? 'hi-IN' : 'en-US'
+                    }
+                },
+                model: "gemini-2.5-flash-preview-tts"
+            };
+            const response = await fetchWithRetry(`${TTS_URL}?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const result = await response.json();
+            const part = result?.candidates?.[0]?.content?.parts?.[0];
+            if (!part || !part.inlineData?.data) throw new Error(getT('tts_error') + ': ' + getT('tts_data_error'));
+            if (part.inlineData.mimeType.startsWith("audio/L16")) {
+                const rateMatch = part.inlineData.mimeType.match(/rate=(\d+)/);
+                if (!rateMatch) throw new Error(getT('tts_error') + ': Could not determine audio sample rate.');
+                const pcm16 = new Int16Array(base64ToArrayBuffer(part.inlineData.data));
+                return URL.createObjectURL(pcmToWav(pcm16, parseInt(rateMatch[1], 10)));
+            }
+            throw new Error(getT('tts_error') + ': Unexpected audio MIME type.');
+        }
+
+        window.playTts = async function(buttonEl, rawText, language) {
+            if (currentAudio) currentAudio.pause();
+            buttonEl.disabled = true;
+            const listenText = getT('listen_advice');
+            buttonEl.innerHTML = `<svg class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span class="sr-only">${listenText}</span>`;
             
-            setTimeout(() => {
-                toast.classList.remove('opacity-100', 'scale-100');
-                toast.classList.add('opacity-0', 'scale-95', 'hidden');
-            }, 3000);
-        }
-
-        // --- Authentication Handlers ---
-        
-        // FIX: Enforce only 'signIn' mode and hide the 'Sign Up' toggle button.
-        function openAuthModal(mode = 'signIn') {
-            state.uiFlags.authMode = 'signIn'; // FIX: Force signIn mode
-            const titleEl = document.getElementById('auth-modal-title');
-            const submitBtn = document.getElementById('auth-submit-btn');
-
-            if (!titleEl || !submitBtn) return;
-
-            // Force sign in messaging and hide toggle button
-            titleEl.textContent = 'Sign In to Your Account';
-            submitBtn.textContent = 'Sign In';
-
-            document.getElementById('auth-modal-overlay').style.display = 'flex';
-        }
-
-        function closeAuthModal() {
-            const overlay = document.getElementById('auth-modal-overlay');
-            if(overlay) overlay.style.display = 'none';
-            const errorEl = document.getElementById('auth-error-message');
-            if(errorEl) errorEl.textContent = '';
-            const form = document.getElementById('auth-form');
-            if(form) form.reset();
-        }
-        
-        async function handleAuthSubmit(e) {
-            e.preventDefault();
-            const form = e.target;
-            const email = form.email.value;
-            const password = form.password.value;
-            const submitBtn = document.getElementById('auth-submit-btn');
-            const errorEl = document.getElementById('auth-error-message');
-
-            if (!submitBtn || !errorEl) return;
-
-            errorEl.textContent = '';
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Processing...';
-
-            try {
-                // FIX: ONLY attempt Sign In (removed createUserWithEmailAndPassword logic)
-                await signInWithEmailAndPassword(auth, email, password);
-                showToast('Signed in successfully!');
-                
-                closeAuthModal();
-                navigateTo('home'); 
-
-            } catch (error) {
-                console.error("Auth failed:", error);
-                
-                // FIX: Custom error message for the common operation-not-allowed issue
-                let errorMessage = error.message.includes('auth/operation-not-allowed') ? 
-                    'Error: Email/Password sign-in may be disabled. Please use the platform\'s primary authentication (Custom Token) or the Guest mode.' :
-                    error.message.replace('Firebase: Error (auth/', '').replace(').', '').replace(/-/g, ' ');
-
-                errorEl.textContent = 'Error: ' + errorMessage;
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Sign In';
+            const textToSpeak = rawText.replace(/(\*\*|`)/g, '').replace(/\[Image Attached\]|\[छवि संलग्न\]/gi, '').trim();
+            if (!textToSpeak) {
+                displayError(getT('tts_error') + ': Cannot speak empty text.');
+                buttonEl.innerHTML = getOriginalIconHtml(listenText);
+                buttonEl.disabled = false;
+                return;
             }
-        }
 
-        async function handleSignOut() {
+            const chunks = splitIntoSentences(textToSpeak);
             try {
-                await signOut(auth);
-                showToast('Signed out successfully.');
-                navigateTo('home');
-            } catch (error) {
-                console.error("Sign out failed:", error);
-                showToast("Sign out failed.", true);
-            }
-        }
-        
-        // --- Data Listener Handlers (The core of the Firebase switch) ---
-        
-        /**
-         * Seeds the public jobs collection with initial data if it's empty.
-         */
-        async function seedPublicJobs(publicJobsCol) {
-            try {
-                // Check if the collection is truly empty before seeding
-                const checkSnapshot = await getDocs(publicJobsCol);
-                if (!checkSnapshot.empty) return; // Already populated, do nothing.
-
-                for (const job of initialSeedJobs) {
-                    await addDoc(publicJobsCol, {
-                        title: job.title,
-                        company: job.company,
-                        location: job.location,
-                        description: job.description,
-                        tags: job.tags,
-                        status: 'open',
-                        createdAt: new Date().toISOString(),
-                        applicants: []
+                for (const chunk of chunks) {
+                    const audioUrl = await fetchAudioChunk(chunk, language);
+                    currentAudio = new Audio(audioUrl);
+                    currentAudio.play();
+                    await new Promise((resolve, reject) => {
+                        currentAudio.onended = () => { URL.revokeObjectURL(audioUrl); resolve(); };
+                        currentAudio.onerror = (e) => { URL.revokeObjectURL(audioUrl); reject(e); };
                     });
                 }
-                showToast("Public job listings have been seeded successfully!");
-            } catch (error) {
-                console.error("Error seeding public jobs:", error);
-                showToast("Failed to seed public jobs.", true);
+            } catch (e) {
+                displayError(`${getT('tts_error')}: ${e.message}`);
+            } finally {
+                buttonEl.innerHTML = getOriginalIconHtml(listenText);
+                buttonEl.disabled = false;
+                currentAudio = null;
             }
         }
 
-        /**
-         * Attaches all necessary real-time listeners.
-         */
-        function loadAllDataListeners() {
-            if (!db) return;
 
-            // Unsubscribe existing listeners to prevent leaks/duplicates
-            if (unsubscribePublicJobs) unsubscribePublicJobs();
-            if (unsubscribeSessions) unsubscribeSessions();
-
-            // 1. Load PUBLIC Jobs in Real-Time
-            const publicJobsCol = collection(db, FIRESTORE_COLLECTIONS.publicJobs);
-
-            // Initial check to seed the collection if needed
-            getDocs(publicJobsCol).then(snapshot => {
-                if (snapshot.empty) {
-                    seedPublicJobs(publicJobsCol);
+        // --- General Gemini API Logic ---
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            let delay = 1000;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status === 429) throw new Error('Rate Limit Exceeded');
+                    if (!response.ok) throw new Error(`API response status ${response.status}: ${await response.text()}`);
+                    return response;
+                } catch (error) {
+                    if (i === maxRetries - 1) throw error;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
                 }
-            }).catch(e => console.error("Error checking job collection for seed:", e));
+            }
+        }
 
+        async function translateText(text, targetLang) {
+            if (!text || !text.trim()) return '';
+            const langName = targetLang === 'hi' ? 'Hindi' : 'English';
+            const prompt = `Translate the following text into ${langName}. Respond with ONLY the translated text, without any introductory phrases or quotation marks. Text to translate: "${text}"`;
+            const payload = { contents: [{ parts: [{ text: prompt }] }] };
+            const options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+            try {
+                const response = await fetchWithRetry(`${GEMINI_URL}?key=${apiKey}`, options);
+                const result = await response.json();
+                const translated = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (translated) return translated.trim().replace(/^"(.*)"$/, '$1');
+                throw new Error("No translated text in API response.");
+            } catch (error) {
+                console.error("Translation failed:", error);
+                return text; // Fallback
+            }
+        }
 
-            unsubscribePublicJobs = onSnapshot(publicJobsCol, (snapshot) => {
-                state.jobs = snapshot.docs.map(doc => ({ 
-                    id: doc.id,
-                    ...doc.data(),
-                    // Ensure 'applicants' is an array for safety
-                    applicants: doc.data().applicants || [], 
-                }));
-                
-                // Trigger UI update for job listings if on that page
-                if (state.currentPage === 'listings') {
-                    // FIX: Added a 0ms setTimeout to ensure DOM is updated after navigation 
-                    // and before the list rendering attempts to find the container.
-                    setTimeout(renderJobsList, 0); 
+        async function generateGeminiResponse(query, imageBase64, imageMimeType, language) {
+            const systemInstruction = (language === 'hi' ? 
+                `आप एक विशेषज्ञ भारतीय कृषि सलाहकार हैं, जिन्हें 'कृषि मित्र' कहा जाता है। आपकी प्रतिक्रियाएं हमेशा हिंदी में होनी चाहिए। आप Google Search और प्रदान की गई छवि का उपयोग करके किसान की फसल की समस्या का निदान और उपचार प्रदान करेंगे। संक्षेप में और उपयोगी जवाब दें।` :
+                `You are an expert Indian agricultural advisor named 'Krishi Mitra'. Your responses must always be in English. Use Google Search and the provided image to diagnose crop problems and suggest solutions. Be concise and helpful.`
+            );
+            const contentsParts = [{ text: query }];
+            if (imageBase64 && imageMimeType) {
+                contentsParts.push({ inlineData: { mimeType: imageMimeType, data: imageBase64 } });
+            }
+            const payload = {
+                contents: [{ parts: contentsParts }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+            };
+            const response = await fetchWithRetry(`${GEMINI_URL}?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const result = await response.json();
+            const candidate = result.candidates?.[0];
+            if (candidate && candidate.content?.parts?.[0]?.text) {
+                const text = candidate.content.parts[0].text;
+                const groundingMetadata = candidate.groundingMetadata;
+                const sources = (groundingMetadata?.groundingAttributions || [])
+                    .map(attr => ({ uri: attr.web?.uri, title: attr.web?.title }))
+                    .filter(s => s.uri && s.title);
+                return { text, sources };
+            }
+            throw new Error(JSON.stringify(result.promptFeedback || 'No text content returned.'));
+        }
+
+        // --- Speech Recognition Logic ---
+        function setMicUIState(listening) {
+            if (listening) {
+                micBtnEl.title = getT('listening');
+                micIconEl.classList.add('text-red-500', 'animate-pulse');
+            } else {
+                micBtnEl.title = getT('start_mic');
+                micIconEl.classList.remove('text-red-500', 'animate-pulse');
+            }
+            setUIState(false);
+        }
+
+        window.toggleVoiceInput = function() {
+            if (!recognition) return displayError('Speech Recognition is not supported.');
+            if (isListening) recognition.stop();
+            else {
+                recognition.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-US';
+                recognition.start();
+            }
+        }
+        
+        function setupSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                recognition = new SpeechRecognition();
+                recognition.continuous = false; 
+                recognition.interimResults = true; 
+                recognition.onstart = () => { isListening = true; setMicUIState(true); chatInputEl.placeholder = getT('listening'); };
+                recognition.onresult = (event) => {
+                    let finalTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
+                    }
+                    chatInputEl.value = finalTranscript || event.results[event.resultIndex][0].transcript;
+                };
+                recognition.onerror = (event) => console.error('Speech Recognition Error:', event.error);
+                recognition.onend = () => {
+                    isListening = false;
+                    setMicUIState(false);
+                    if (chatInputEl.value.trim()) handleUserInput();
+                    else chatInputEl.placeholder = getT('placeholder');
+                };
+            } else micBtnEl.disabled = true;
+        }
+
+        // --- Chatbot Input Handling ---
+        window.handleUserInput = async function() {
+            const userInput = chatInputEl.value.trim();
+            errorMessageEl.classList.add('hidden');
+            const hasImage = !!uploadedImageBase64;
+            if (!userInput && !hasImage) return;
+            if (!isReady || isListening) return;
+
+            chatHistory.push({
+                isUser: true,
+                text: userInput,
+                translations: { [currentLanguage]: userInput },
+                imageUrl: hasImage ? imagePreviewEl.src : null,
+                citations: null
+            });
+            const queryForAI = hasImage ? `[${getT('upload_image')}] ${userInput}` : userInput;
+            const tempBase64 = uploadedImageBase64;
+            const tempMimeType = uploadedImageMimeType;
+            chatInputEl.value = '';
+            clearImage();
+            renderChatHistory();
+            setUIState(true);
+
+            try {
+                const { text: aiResponseText, sources: citations } = await generateGeminiResponse(queryForAI, tempBase64, tempMimeType, currentLanguage);
+                chatHistory.push({
+                    isUser: false,
+                    text: aiResponseText,
+                    translations: { [currentLanguage]: aiResponseText },
+                    imageUrl: null,
+                    citations: citations
+                });
+            } catch (e) {
+                chatHistory.push({
+                    isUser: false,
+                    text: getT('processing_error'),
+                    translations: { en: TEXTS.en.processing_error, hi: TEXTS.hi.processing_error },
+                    imageUrl: null,
+                    citations: null
+                });
+                displayError(`${getT('api_error')}: ${e.message}`);
+            } finally {
+                setUIState(false);
+                renderChatHistory();
+            }
+        }
+        
+        chatInputEl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !sendBtnEl.disabled) handleUserInput();
+        });
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeTheme();
+            setupSpeechRecognition();
+            translateUI(); 
+
+            themeToggleBtn.addEventListener('click', toggleTheme);
+            
+            creditsBtn.addEventListener('click', () => {
+                creditsTextContentEl.textContent = creditsText;
+                creditsModal.classList.remove('hidden');
+            });
+
+            closeCreditsBtn.addEventListener('click', () => {
+                creditsModal.classList.add('hidden');
+            });
+
+            creditsModal.addEventListener('click', (e) => {
+                if (e.target === creditsModal) {
+                    creditsModal.classList.add('hidden');
                 }
-
-            }, (error) => {
-                console.error("Error loading public jobs:", error);
-                showToast("Error loading public job listings.", true);
             });
             
-            // 2. Load PRIVATE Sessions in Real-Time (only if authenticated)
-            if (userId && !auth.currentUser.isAnonymous) { // Only fetch sessions for real accounts
-                const sessionsCol = collection(db, FIRESTORE_COLLECTIONS.sessions(userId));
-                unsubscribeSessions = onSnapshot(sessionsCol, (snapshot) => {
-                    state.sessions = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data()
-                    }));
-                    
-                    // Trigger UI update for sessions
-                    if (state.currentPage === 'employ') {
-                        renderSessionsList(state.sessions);
-                    }
-                }, (error) => {
-                    console.error("Error loading sessions from Firestore:", error);
-                    showToast("Could not load sessions from Firestore.", true);
-                });
-            } else {
-                // Clear sessions listener and state if signed out or anonymous
-                state.sessions = [];
-                if (unsubscribeSessions) {
-                    unsubscribeSessions();
-                    unsubscribeSessions = null;
-                }
-            }
-        }
-
-        /**
-         * Applies to a job by updating the job document in Firestore with the user's ID.
-         */
-        async function applyToJob(jobId) {
-            if (!userId || auth.currentUser.isAnonymous) {
-                showToast("Please sign in with a registered account to apply to jobs.", true);
-                openAuthModal('signIn');
-                return;
-            }
-
-            const job = state.jobs.find(j => j.id === jobId);
-            if (!job) return showToast("Job not found.", true);
-
-            // Check if already applied (based on local state derived from Firestore)
-            if (job.applicants.includes(userId)) {
-                return showToast("You have already applied to this job.", true);
-            }
-
-            try {
-                // The `doc` function needs the full path including the collection and document ID
-                const jobDocRef = doc(db, FIRESTORE_COLLECTIONS.publicJobs, jobId);
-
-                // Use arrayUnion to atomically add the userId to the applicants array
-                await updateDoc(jobDocRef, {
-                    applicants: arrayUnion(userId)
-                });
-                
-                showToast("Application submitted successfully! (Real-time update via Firestore)");
-
-            } catch (error) {
-                console.error("Application failed:", error);
-                showToast("Application failed: " + error.message, true);
-            }
-        }
+            chatHistory.push({
+                isUser: false,
+                text: TEXTS.en.init_welcome,
+                translations: { en: TEXTS.en.init_welcome, hi: TEXTS.hi.init_welcome },
+                imageUrl: null,
+                citations: null
+            });
+            isReady = true;
+            setUIState(false);
+            renderChatHistory();
+        });
         
-        /**
-         * Creates a new job posting and saves it to the public collection.
-         */
-        async function createJob(e) {
-            e.preventDefault();
-            if (!db || !userId || auth.currentUser.isAnonymous) return showToast("Must be signed in with a registered account to post a job.", true);
-            
-            const form = e.target;
-            const btn = document.getElementById('job-submit');
-            if (state.uiFlags.isCreating) return;
-            
-            state.uiFlags.isCreating = true;
-            btn.disabled = true;
-            btn.textContent = 'Posting to Firestore...';
-
-            try {
-                const newJob = {
-                    title: form['job-title'].value,
-                    company: form['job-company'].value,
-                    location: form['job-location'].value,
-                    description: form['job-description'].value,
-                    tags: form['job-tags'].value.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0),
-                    status: 'open',
-                    createdAt: new Date().toISOString(),
-                    posterId: userId, // Track who posted it
-                    applicants: [] // Initialize empty applicants array
-                };
-                
-                if (!newJob.title || !newJob.company || !newJob.description) throw new Error("Please fill in required fields.");
-
-                const publicJobsCol = collection(db, FIRESTORE_COLLECTIONS.publicJobs);
-                await addDoc(publicJobsCol, newJob);
-                
-                showToast("Job posted successfully to the public listings!");
-                form.reset();
-
-            } catch (error) {
-                console.error("Firestore job creation failed:", error);
-                showToast("Job creation failed: " + error.message, true);
-            } finally {
-                state.uiFlags.isCreating = false;
-                btn.disabled = false;
-                btn.textContent = 'Post Job to Public Listings';
-            }
-        }
-
-        /**
-         * Saves a new session booking to the user's private collection.
-         */
-        async function saveSession(sessionData) {
-            if (!db || !userId) throw new Error("Firestore not initialized or user not logged in.");
-
-            const sessionsCol = collection(db, FIRESTORE_COLLECTIONS.sessions(userId));
-            const newSession = {
-                ...sessionData,
-                createdAt: new Date().toISOString(),
-                status: 'booked'
-            };
-
-            await addDoc(sessionsCol, newSession);
-        }
-
-
-        // --- UI Rendering Functions for Specific Content ---
-
-        function jobCardHTML(job) {
-            // Check if the current user ID is in the job's applicants array
-            const isApplied = userId && job.applicants && job.applicants.includes(userId);
-            const statusClosed = job.status === 'closed';
-            const numApplicants = (job.applicants || []).length;
-            const isAnonymous = userId && auth.currentUser?.isAnonymous;
-
-            const btnText = statusClosed ? 'Closed' : (isApplied ? 'Applied!' : (isAnonymous ? 'Sign In to Apply' : 'Apply Now'));
-            const btnColor = statusClosed ? 'bg-gray-400' : (isApplied ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700');
-            const isDisabled = statusClosed || isApplied || isAnonymous;
-            
-            const applicantsBadge = userId && (job.posterId === userId) ? 
-                `<span class="ml-2 px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 rounded-full dark:bg-red-900 dark:text-red-100">${numApplicants} Applicants</span>` : '';
-
-            return `
-            <div id="job-card-${job.id}" class="card bg-white dark:bg-gray-800 p-6 shadow-md rounded-lg transition hover:shadow-xl dark:shadow-none dark:hover:shadow-indigo-500/50">
-                <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">${job.title}</h3>
-                <p class="text-md text-gray-700 dark:text-gray-300 mt-1">${job.company} • <span class="font-semibold">${job.location}</span></p>
-                <div class="mt-2 flex flex-wrap gap-2 items-center">
-                    ${(job.tags || []).map(tag => `<span class="px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 rounded-full dark:bg-indigo-900 dark:text-indigo-200">${tag}</span>`).join('')}
-                    ${applicantsBadge}
-                </div>
-                <p class="mt-4 text-gray-600 dark:text-gray-400">${job.description}</p>
-                <div class="mt-6 flex justify-end">
-                    <button 
-                        id="apply-${job.id}" 
-                        class="btn px-4 py-2 text-white font-semibold rounded-lg transition duration-150 disabled:opacity-50 ${btnColor}"
-                        ${isDisabled ? 'disabled' : ''}
-                        onclick="${isAnonymous ? `openAuthModal('signIn')` : `applyToJob('${job.id}')`}"
-                        type="button"
-                    >
-                        ${btnText}
-                    </button>
-                </div>
-            </div>`;
-        }
-
-        function renderJobsList() {
-            const container = document.getElementById('jobs-list-container');
-            if (!container) return;
-
-            if (state.jobs.length === 0) {
-                 container.innerHTML = `<p class="col-span-full text-center text-gray-500 dark:text-gray-400 mt-8">No open jobs found right now. Try posting one!</p>`;
-                 return;
-            }
-            
-            // Sort by creation date (newest first)
-            const sortedJobs = [...state.jobs].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-            container.innerHTML = sortedJobs.map(j => jobCardHTML(j)).join('');
-        }
-        
-        async function scheduleSession(e) {
-            e.preventDefault();
-            if (!isAuthenticated || auth.currentUser.isAnonymous) return showToast("Please sign in with a registered account to book a session.", true);
-
-            const dtInput = document.getElementById('session-datetime');
-            const btn = document.getElementById('session-submit');
-            
-            if (!dtInput || !btn) return;
-
-            const value = dtInput.value;
-            if (!value) return showToast('Please select a future date and time.', true);
-
-            const when = new Date(value);
-            if (isNaN(when.getTime()) || when < new Date()) {
-                return showToast('Invalid date or time selected.', true);
-            }
-
-            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-            
-            btn.disabled = true;
-            btn.textContent = 'Scheduling...';
-
-            try {
-                await saveSession({
-                    scheduledAt: when.toISOString(), 
-                    timezone: tz,
-                    topic: 'career_coaching',
-                });
-
-                showToast('Session Booked Successfully!');
-                dtInput.value = ''; 
-            } catch (error) {
-                console.error("Scheduling failed:", error);
-                showToast("Scheduling failed. Please try again.", true);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Book Session';
-            }
-        }
-
-        function renderSessionsList(sessions) {
-            const container = document.getElementById('sessions-list-container');
-            if (!container) return;
-
-            if (sessions.length === 0) {
-                container.innerHTML = `<p class="text-gray-500 dark:text-gray-400">No sessions booked yet.</p>`;
-                return;
-            }
-
-            container.innerHTML = sessions
-                .sort((a, b) => new Date(b.scheduledAt) - new Date(a.scheduledAt)) 
-                .map(s => {
-                    const date = new Date(s.scheduledAt).toLocaleString() || 'Pending...'; 
-                    return `
-                        <div class="p-4 bg-white dark:bg-gray-700 shadow rounded-lg border-l-4 border-blue-500">
-                            <p class="font-semibold text-gray-900 dark:text-gray-100">${date}</p>
-                            <p class="text-sm text-gray-600 dark:text-gray-300">Topic: ${s.topic.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}</p>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">Status: <span class="font-medium text-green-700">${s.status.toUpperCase()}</span></p>
-                        </div>
-                    `;
-                }).join('');
-        }
-        
-        // --- PAGE RENDERING FUNCTIONS ---
-
-        function renderHomePage() {
-            return `
-                <section class="p-10 bg-indigo-50 dark:bg-indigo-900 rounded-xl shadow-lg text-center mb-12 transition-colors duration-500">
-                    <h2 class="text-4xl font-extrabold text-indigo-800 dark:text-indigo-200 mb-4">Welcome to Career Navigator</h2>
-                    <p class="text-xl text-indigo-700 dark:text-indigo-300 mb-6">This site is now 100% powered by **Firebase Firestore** for real-time, persistent job and session data!</p>
-                    <p class="text-lg text-indigo-600 dark:text-indigo-400 mb-8">Sign in to **Post Jobs** and **Book Coaching Sessions**.</p>
-                    <div class="flex justify-center flex-wrap gap-4">
-                        <button onclick="navigateTo('listings')" class="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150">View All Real-Time Listings</button>
-                        ${isAuthenticated && !auth.currentUser.isAnonymous ? 
-                           `<button onclick="navigateTo('employ')" class="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-150">Manage Account & Jobs</button>` :
-                           `<button onclick="openAuthModal('signIn')" class="px-6 py-3 bg-yellow-600 text-white font-semibold rounded-lg hover:bg-yellow-700 transition duration-150">Sign In (or use Guest Mode)</button>`
-                        }
-                    </div>
-                </section>
-                <section class="mt-12 text-center text-gray-600 dark:text-gray-400">
-                    <p class="text-sm">Current User: ${userEmail} (${auth?.currentUser?.isAnonymous ? 'Anonymous' : (isAuthenticated ? 'Registered' : 'Guest')})</p>
-                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">To perform full management tasks (Post Job, Book Session), you must be signed in via the custom token provided by the environment, as standard Email/Password Sign Up is currently disabled.</p>
-                </section>
-            `;
-        }
-
-        function renderJobListingPage() {
-            
-            // Check if jobs state is already populated (from onSnapshot)
-            const initialContent = state.jobs.length > 0 ? 
-                '<p class="col-span-full text-center py-4 text-gray-500 dark:text-gray-400">Listings are updated in real-time.</p>' : 
-                (db ? '<div class="col-span-full text-center py-12 text-gray-500 dark:text-gray-400">Loading job data from Firestore...</div>' : '<div class="col-span-full text-center py-12 text-red-500 dark:text-red-400">Firebase failed to initialize. Cannot load jobs.</div>');
-
-            return `
-                <section class="mb-12">
-                    <h2 class="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-6 border-b pb-2">All Real-Time Job Listings</h2>
-                    <div id="jobs-list-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        ${initialContent}
-                    </div>
-                </section>
-            `;
-        }
-
-        function renderEmployManagePage() {
-            
-            if (!isAuthenticated || auth.currentUser.isAnonymous) {
-                return `
-                    <section class="text-center p-12 bg-red-100 dark:bg-red-900 rounded-xl shadow-lg transition-colors duration-500">
-                        <h2 class="text-3xl font-bold text-red-800 dark:text-red-200 mb-4">Access Denied</h2>
-                        <p class="text-xl text-red-700 dark:text-red-300 mb-6">Please sign in with a **registered account** (not Anonymous/Guest) to post jobs and manage sessions.</p>
-                        <p class="text-md text-red-600 dark:text-red-400 mb-8">This is required for security and data isolation (Private Data Collection).</p>
-                        <button onclick="openAuthModal('signIn')" class="px-6 py-3 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">Attempt Sign In</button>
-                    </section>
-                `;
-            }
-
-            return `
-                <section class="mb-12">
-                    <h2 class="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-6 border-b border-gray-200 dark:border-gray-700 pb-2">Employ & Management Tools</h2>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <!-- Job Creation Form -->
-                        <div class="p-6 bg-white dark:bg-gray-800 rounded-xl shadow-lg transition-colors duration-500">
-                            <h3 class="text-xl font-semibold text-green-700 dark:text-green-400 mb-4">Post a Job Listing</h3>
-                            <p class="text-sm text-blue-600 dark:text-blue-400 mb-4">This job will appear instantly on the public listings page for all users.</p>
-                            <form id="job-creation-form" class="space-y-3" onsubmit="createJob(event)">
-                                <input type="text" id="job-title" name="job-title" required placeholder="Job Title" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
-                                <input type="text" id="job-company" name="job-company" required placeholder="Company" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
-                                <input type="text" id="job-location" name="job-location" required placeholder="Location" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
-                                <input type="text" id="job-tags" name="job-tags" placeholder="Tags (comma-separated)" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400">
-                                <textarea id="job-description" name="job-description" rows="3" required placeholder="Description" class="w-full px-4 py-2 border rounded-lg bg-gray-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white placeholder:text-gray-400"></textarea>
-                                <button type="submit" id="job-submit" class="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-150 disabled:bg-gray-400">
-                                    Post Job to Public Listings
-                                </button>
-                            </form>
-                        </div>
-
-                        <!-- Session Scheduler -->
-                        <div class="p-6 bg-gray-100 dark:bg-gray-900 rounded-xl shadow-inner transition-colors duration-500">
-                            <h3 class="text-xl font-semibold text-indigo-700 dark:text-indigo-400 mb-4">Book 1:1 Coaching Session</h3>
-                            <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">Saved privately to your user collection.</p>
-                            <form id="session-form" onsubmit="scheduleSession(event)">
-                                <div class="mb-6">
-                                    <label for="session-datetime" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Session Date & Time</label>
-                                    <input type="datetime-local" id="session-datetime" required
-                                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white">
-                                </div>
-                                <button type="submit" id="session-submit" 
-                                    class="w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition disabled:bg-gray-400">
-                                    Book Session
-                                </button>
-                            </form>
-                            
-                            <h3 class="text-xl font-semibold text-gray-800 dark:text-gray-100 mt-8 mb-4 border-t border-gray-200 dark:border-gray-700 pt-4">My Booked Sessions</h3>
-                            <div id="sessions-list-container" class="flex flex-col gap-4">
-                                <p class="text-gray-500 dark:text-gray-400">Loading sessions from Firestore...</p>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            `;
-        }
-
-
-        // --- Main Router ---
-        function renderContent() {
-            const contentArea = document.getElementById('app-content');
-            if (!contentArea) return;
-
-            // Fade out current content
-            contentArea.style.opacity = '0';
-            
-            let htmlContent = '';
-            
-            switch (state.currentPage) {
-                case 'home':
-                    htmlContent = renderHomePage();
-                    break;
-                case 'listings':
-                    htmlContent = renderJobListingPage();
-                    break;
-                case 'employ':
-                    htmlContent = renderEmployManagePage();
-                    break;
-                default:
-                    htmlContent = renderHomePage();
-            }
-
-            // After a short delay to allow fade out, set new content and fade in
-            setTimeout(() => {
-                contentArea.innerHTML = htmlContent;
-                contentArea.style.opacity = '1';
-                
-                // Specific Post-Render Logic
-                if (state.currentPage === 'listings') {
-                    // Render list immediately if data is available 
-                    renderJobsList();
-                } else if (state.currentPage === 'employ' && isAuthenticated) {
-                    // Render sessions list immediately if data is available 
-                    renderSessionsList(state.sessions);
-                }
-            }, 300); // 300ms matches the CSS transition time
-        }
-
-        // --- Master Render Function ---
-        function renderAllSections() {
-            if (state.uiFlags.isRendering) return;
-            state.uiFlags.isRendering = true;
-
-            // Calculate the greeting name safely
-            // userEmail is guaranteed to be a string now. If it contains '@', use the part before it.
-            const greetingDisplayName = userEmail && userEmail.includes('@') ? userEmail.split('@')[0] : userEmail;
-
-            // 1. Update Header Auth Status
-            const authControls = document.getElementById('auth-controls');
-            if (authControls) {
-                if (isAuthenticated) {
-                    authControls.innerHTML = `
-                        <span class="text-sm font-semibold text-indigo-700 dark:text-indigo-300 mr-4 hidden sm:inline">Hello, ${greetingDisplayName}</span>
-                        <button onclick="handleSignOut()" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150 text-sm">Sign Out</button>
-                    `;
-                } else {
-                    authControls.innerHTML = `
-                        <button onclick="openAuthModal('signIn')" class="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 text-sm">Sign In</button>
-                    `;
-                }
-            }
-
-            // 2. Render Hamburger Menu Links
-            const menuLinksContainer = document.getElementById('mobile-menu-links');
-            if (menuLinksContainer) {
-                menuLinksContainer.innerHTML = `
-                    <a href="#" onclick="navigateTo('home')" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-gray-700">Home</a>
-                    <a href="#" onclick="navigateTo('listings')" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-gray-700">Job Listings</a>
-                    <a href="#" onclick="navigateTo('employ')" class="block px-3 py-2 rounded-md text-base font-medium text-gray-700 dark:text-gray-200 hover:bg-indigo-50 dark:hover:bg-gray-700">${isAuthenticated && !auth.currentUser?.isAnonymous ? 'Employ/Manage' : 'Employ (Sign In)'}</a>
-                `;
-            }
-
-            // 3. Update the theme icon after other elements are rendered
-            updateThemeToggleIcon(state.currentTheme);
-
-            // 4. Render the correct page content
-            renderContent();
-
-
-            state.uiFlags.isRendering = false;
-        }
-
-        // Main Bootstrap Function
-        window.onload = async function bootstrap() {
-            // 1. Load theme preference first
-            loadTheme();
-
-            // 2. Render the UI immediately to clear the "Loading" state.
-            renderAllSections(); 
-            
-            // 3. Then, initialize Firebase and handle auth state asynchronously.
-            initFirebase();
-        };
-
     </script>
-
-    <!-- Toast Notification Container -->
-    <div id="toast-container" 
-        class="fixed bottom-5 right-5 z-50 p-4 rounded-lg text-white font-semibold shadow-2xl 
-               transition-all duration-300 ease-in-out opacity-0 scale-95 hidden"
-        style="min-width: 250px;">
-        Notification goes here.
-    </div>
-
-    <!-- Authentication Modal -->
-    <div id="auth-modal-overlay" class="modal-overlay">
-        <div class="modal-content bg-white dark:bg-gray-800">
-            <h3 id="auth-modal-title" class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4">Sign In to Your Account</h3>
-            <p id="auth-error-message" class="text-red-500 text-sm mb-4"></p>
-            
-            <form id="auth-form" onsubmit="handleAuthSubmit(event)">
-                <div class="mb-4">
-                    <label for="auth-email" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
-                    <input type="email" id="auth-email" name="email" required
-                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-                <div class="mb-6">
-                    <label for="auth-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
-                    <input type="password" id="auth-password" name="password" required minlength="6"
-                        class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150">
-                </div>
-                <button type="submit" id="auth-submit-btn" 
-                    class="w-full px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 disabled:bg-gray-400">
-                    Sign In
-                </button>
-            </form>
-
-            <!-- Sign Up toggle is hidden due to "operation not allowed" issue -->
-            <button onclick="toggleAuthMode()" id="auth-toggle-btn"
-                class="mt-4 w-full text-sm text-indigo-600 hover:text-indigo-800 transition duration-150 hidden">
-                Need an account? Sign Up
-            </button>
-            
-            <button onclick="closeAuthModal()" 
-                class="absolute top-3 right-3 text-gray-500 dark:text-gray-300 hover:text-gray-800 transition">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
-        </div>
-    </div>
-
-    <!-- Navigation & Header (Desktop & Mobile) -->
-    <header class="sticky top-0 bg-white dark:bg-gray-800 shadow-lg z-20 transition-colors duration-500">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between items-center h-16">
-                <!-- Logo/Title -->
-                <a href="#" onclick="navigateTo('home')" class="text-2xl font-extrabold text-indigo-700 dark:text-indigo-400 tracking-tight">Career Navigator</a>
-                
-                <!-- Desktop Nav Links -->
-                <nav class="hidden sm:flex space-x-4 items-center">
-                    <button onclick="toggleTheme()" class="p-2 rounded-full text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-150" aria-label="Toggle Theme">
-                        <span id="theme-toggle-icon">
-                            <!-- Icon populated by JS -->
-                        </span>
-                    </button>
-                    <a href="#" onclick="navigateTo('home')" class="text-gray-600 dark:text-gray-300 hover:text-indigo-800 dark:hover:text-indigo-400 font-medium transition">Home</a>
-                    <a href="#" onclick="navigateTo('listings')" class="text-gray-600 dark:text-gray-300 hover:text-indigo-800 dark:hover:text-indigo-400 font-medium transition">Listings</a>
-                    <a href="#" onclick="navigateTo('employ')" class="text-gray-600 dark:text-gray-300 hover:text-indigo-800 dark:hover:text-indigo-400 font-medium transition">Employ</a>
-                    <div id="auth-controls">
-                        <!-- Auth status (Sign In or Sign Out/User Email) -->
-                    </div>
-                </nav>
-
-                <!-- Mobile Menu Button & Theme Toggle (Combined) -->
-                <div class="sm:hidden flex items-center space-x-2">
-                    <button onclick="toggleTheme()" class="p-2 rounded-full text-gray-500 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-150" aria-label="Toggle Theme">
-                        <span id="theme-toggle-icon-mobile">
-                            <!-- Icon populated by JS -->
-                        </span>
-                        <script>
-                            // This script copies the icon from the desktop version to the mobile version
-                            const desktopIcon = document.getElementById('theme-toggle-icon');
-                            const mobileIcon = document.getElementById('theme-toggle-icon-mobile');
-                            if (desktopIcon && mobileIcon) {
-                                // Observer to update mobile icon when desktop one changes
-                                const observer = new MutationObserver(() => {
-                                    mobileIcon.innerHTML = desktopIcon.innerHTML;
-                                });
-                                observer.observe(desktopIcon, { childList: true });
-                            }
-                        </script>
-                    </button>
-                    <button onclick="toggleMenu()" class="inline-flex items-center justify-center p-2 rounded-md text-gray-400 dark:text-gray-300 hover:text-gray-500 dark:hover:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500" aria-expanded="false">
-                        <svg class="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-                        </svg>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Mobile Menu (Hidden by default) -->
-        <div class="sm:hidden hidden bg-white dark:bg-gray-800 shadow-md absolute w-full transition-colors duration-500" id="mobile-menu">
-            <div class="px-2 pt-2 pb-3 space-y-1" id="mobile-menu-links">
-                <!-- Links dynamically populated by renderAllSections -->
-            </div>
-            <div class="border-t border-gray-100 dark:border-gray-700 p-3 text-right">
-                 <!-- Mobile auth status rendered here for signing out -->
-                 ${isAuthenticated ? `<button onclick="handleSignOut()" class="w-full px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition duration-150">Sign Out</button>` : `<button onclick="openAuthModal('signIn')" class="w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150">Sign In</button>`}
-            </div>
-        </div>
-    </header>
-
-    <!-- Main Content Area -->
-    <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        <!-- Application Content Container - Dynamically Updated by JS -->
-        <div id="app-content" class="page-content">
-            <!-- Content will be rendered here immediately by bootstrap() -->
-            <div class="animate-pulse p-10 bg-gray-100 dark:bg-gray-800 rounded-xl text-center text-gray-500 dark:text-gray-400">Loading Application...</div>
-        </div>
-
-    </main>
-
-    <!-- Footer -->
-    <footer class="bg-white dark:bg-gray-800 text-center py-4 border-t border-gray-100 dark:border-gray-700 mt-8 transition-colors duration-500">
-        <p class="text-sm text-gray-500 dark:text-gray-400">Career Navigator by Gemini. All data stored in Firebase Firestore.</p>
-    </footer>
 </body>
 </html>
+
